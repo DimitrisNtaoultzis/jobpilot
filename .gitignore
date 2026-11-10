@@ -1,0 +1,41 @@
+# --- Secrets: ΠΟΤΕ στο Git ---
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# --- Εργαλεία ελέγχου/tests (θα τα δούμε στα 0.5–0.6) ---
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Data & ML artifacts (μεγάλα αρχεία) ---
+data/raw/
+data/processed/
+mlruns/
+*.safetensors
+*.gguf
+*.pt
+*.pkl
+
+# --- Terraform (Φάση 8, περιέχει ευαίσθητα δεδομένα) ---
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
