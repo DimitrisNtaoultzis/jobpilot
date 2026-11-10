@@ -1,0 +1,7 @@
+[project]
+name = "jobpilot"
+version = "0.1.0"
+description = "AI job-hunting copilot: LangGraph agent, FastAPI, Django, ML & LoRA fine-tuning"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
