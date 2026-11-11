@@ -1,0 +1,45 @@
+name: CI
+
+# When to run: on every push to main, and on every pull request
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: this workflow only needs to read the code
+permissions:
+  contents: read
+
+# If you push again while a run is in progress, cancel the old run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.13.7"
+          enable-cache: true
+
+      - name: Install Python and dependencies
+        run: uv sync --locked
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit checks (ruff, file checks, uv lock)
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
+      - name: Run tests
+        run: uv run pytest
