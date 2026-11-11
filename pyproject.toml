@@ -6,21 +6,34 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[build-system]                              # How the package is built and installed
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]
 
 [tool.ruff]
-line-length = 100        # Μέγιστο μήκος γραμμής (το default 88 είναι λίγο στενό)
+line-length = 100        # Max line length (the default 88 is a bit narrow)
 
 [tool.ruff.lint]
 select = [
-    "E", "W",  # pycodestyle: βασικοί κανόνες στυλ (PEP 8)
-    "F",       # Pyflakes: αχρησιμοποίητα imports/μεταβλητές, ορισμοί που λείπουν
-    "I",       # isort: ταξινόμηση των imports
-    "UP",      # pyupgrade: σύγχρονο συντακτικό Python 3.12
-    "B",       # bugbear: συνηθισμένα "ύπουλα" bugs
-    "SIM",     # simplify: απλούστερος τρόπος να γράψεις το ίδιο πράγμα
+    "E", "W",  # pycodestyle: basic style rules (PEP 8)
+    "F",       # Pyflakes: unused imports/variables, undefined names
+    "I",       # isort: import ordering
+    "UP",      # pyupgrade: modern Python 3.12 syntax
+    "B",       # bugbear: common subtle bugs
+    "SIM",     # simplify: simpler ways to write the same thing
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["jobpilot"]    # "jobpilot" is OUR code (first-party)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]                       # Where pytest looks for tests
+addopts = ["-ra", "--strict-markers"]       # -ra: summary of everything that didn't pass
+                                            # --strict-markers: error on unknown marker names
