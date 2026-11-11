@@ -1,4 +1,4 @@
-# --- Secrets: ΠΟΤΕ στο Git ---
+# --- Secrets: NEVER commit ---
 .env
 .env.*
 !.env.example
@@ -11,7 +11,7 @@ __pycache__/
 build/
 dist/
 
-# --- Εργαλεία ελέγχου/tests (θα τα δούμε στα 0.5–0.6) ---
+# --- Lint/test tool caches ---
 .ruff_cache/
 .pytest_cache/
 .coverage
@@ -20,7 +20,7 @@ htmlcov/
 # --- Jupyter ---
 .ipynb_checkpoints/
 
-# --- Data & ML artifacts (μεγάλα αρχεία) ---
+# --- Data & ML artifacts (large files) ---
 data/raw/
 data/processed/
 mlruns/
@@ -29,7 +29,7 @@ mlruns/
 *.pt
 *.pkl
 
-# --- Terraform (Φάση 8, περιέχει ευαίσθητα δεδομένα) ---
+# --- Terraform (state files contain sensitive data) ---
 .terraform/
 *.tfstate
 *.tfstate.*
