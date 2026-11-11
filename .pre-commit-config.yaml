@@ -1,0 +1,31 @@
+# Έλεγχοι που τρέχουν αυτόματα σε κάθε `git commit`.
+# Εγκατάσταση (μία φορά ανά clone): uv run pre-commit install
+# Χειροκίνητα σε όλα τα αρχεία:     uv run pre-commit run --all-files
+
+repos:
+  # Γενικοί έλεγχοι αρχείων
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace        # σβήνει κενά στο τέλος των γραμμών
+      - id: end-of-file-fixer          # κάθε αρχείο τελειώνει με μία κενή γραμμή
+      - id: check-yaml                 # τα .yaml είναι έγκυρα (θα έχουμε πολλά: CI, k8s)
+      - id: check-toml                 # το pyproject.toml είναι έγκυρο
+      - id: check-merge-conflict       # δεν ξεχάστηκαν σημάδια <<<<<<< από merge
+      - id: check-added-large-files    # μπλοκάρει αρχεία > 1MB (datasets, μοντέλα)
+        args: [--maxkb=1000]
+      - id: detect-private-key         # μπλοκάρει ιδιωτικά κλειδιά (SSH/TLS)
+
+  # Ruff: ίδια έκδοση με το uv.lock
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # uv: ελέγχει ότι το uv.lock είναι συγχρονισμένο με το pyproject.toml
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.7
+    hooks:
+      - id: uv-lock

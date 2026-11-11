@@ -22,6 +22,26 @@ An AI-powered job-hunting copilot. Upload your CV and a job posting, and JobPilo
 | DevOps | Docker, Kubernetes (kind, Helm), GitHub Actions |
 | Cloud | Azure (Container Apps, PostgreSQL, Key Vault), Terraform |
 
+## Development setup
+
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) and Git.
+
+```bash
+git clone https://github.com/DimitrisNtaoultzis/jobpilot.git
+cd jobpilot
+uv sync                      # create .venv and install all dependencies (from uv.lock)
+uv run pre-commit install    # enable the git hooks (once per clone)
+cp .env.example .env         # then fill in the values
+```
+
+**Useful commands:**
+
+```bash
+uv run ruff check .                  # lint
+uv run ruff format .                 # format
+uv run pre-commit run --all-files    # run all checks manually
+```
+
 ## Roadmap
 
 - [ ] Phase 0: Project foundations (tooling, CI)
