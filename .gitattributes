@@ -1,0 +1,13 @@
+# Όλα τα αρχεία κειμένου αποθηκεύονται με LF (Linux-style),
+# γιατί ο κώδικας θα τρέχει σε Linux (Docker, CI, Azure).
+* text=auto eol=lf
+
+# Εξαίρεση: τα Windows scripts ΠΡΕΠΕΙ να έχουν CRLF για να τρέχουν σωστά
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary αρχεία: το Git να μην τα πειράζει ποτέ
+*.png binary
+*.jpg binary
+*.pdf binary
