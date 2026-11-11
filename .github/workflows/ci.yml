@@ -10,9 +10,10 @@ on:
 permissions:
   contents: read
 
-# If you push again while a run is in progress, cancel the old run
+# If you push again while a run is in progress, cancel the old run.
+# One group per workflow and per PR (or per branch for pushes).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
