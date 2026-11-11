@@ -1,5 +1,7 @@
 # JobPilot 🧭
 
+[![CI](https://github.com/DimitrisNtaoultzis/jobpilot/actions/workflows/ci.yml/badge.svg)](https://github.com/DimitrisNtaoultzis/jobpilot/actions/workflows/ci.yml)
+
 An AI-powered job-hunting copilot. Upload your CV and a job posting, and JobPilot:
 
 - extracts the required skills from the posting,
