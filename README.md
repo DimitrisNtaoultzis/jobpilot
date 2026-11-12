@@ -35,11 +35,13 @@ uv sync                      # create .venv and install all dependencies (from u
 uv run pre-commit install    # enable the git hooks (once per clone)
 cp .env.example .env         # then fill in the values
 docker compose up -d         # start PostgreSQL + pgvector
+uv run python manage.py migrate    # create the database tables
 ```
 
 **Useful commands:**
 
 ```bash
+uv run python manage.py runserver    # start the dev server at http://127.0.0.1:8000/
 uv run ruff check .                  # lint
 uv run ruff format .                 # format
 uv run pre-commit run --all-files    # run all checks manually
