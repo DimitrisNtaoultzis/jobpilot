@@ -26,7 +26,7 @@ An AI-powered job-hunting copilot. Upload your CV and a job posting, and JobPilo
 
 ## Development setup
 
-**Prerequisites:** [uv](https://docs.astral.sh/uv/) and Git.
+**Prerequisites:** [uv](https://docs.astral.sh/uv/), Git and [Docker](https://docs.docker.com/get-docker/) (with Docker Compose).
 
 ```bash
 git clone https://github.com/DimitrisNtaoultzis/jobpilot.git
@@ -34,6 +34,7 @@ cd jobpilot
 uv sync                      # create .venv and install all dependencies (from uv.lock)
 uv run pre-commit install    # enable the git hooks (once per clone)
 cp .env.example .env         # then fill in the values
+docker compose up -d         # start PostgreSQL + pgvector
 ```
 
 **Useful commands:**
@@ -42,11 +43,14 @@ cp .env.example .env         # then fill in the values
 uv run ruff check .                  # lint
 uv run ruff format .                 # format
 uv run pre-commit run --all-files    # run all checks manually
+docker compose ps                    # show the status of the database container
+docker compose stop                  # stop the database (data is kept)
+docker compose down                  # remove the container (data is kept in the volume)
 ```
 
 ## Roadmap
 
-- [ ] Phase 0: Project foundations (tooling, CI)
+- [x] Phase 0: Project foundations (tooling, CI)
 - [ ] Phase 1: Database & Django web app
 - [ ] Phase 2: FastAPI AI service & LangGraph agent
 - [ ] Phase 3: Classical ML (job classification)
