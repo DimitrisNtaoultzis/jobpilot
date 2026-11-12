@@ -42,6 +42,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Local apps
+    "jobpilot.accounts",
+    "jobpilot.jobs",
 ]
 
 MIDDLEWARE = [
@@ -78,6 +81,12 @@ WSGI_APPLICATION = "jobpilot.web.wsgi.application"
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {"default": env.db("DATABASE_URL")}
+
+
+# Authentication
+# https://docs.djangoproject.com/en/6.1/topics/auth/customizing/#substituting-a-custom-user-model
+
+AUTH_USER_MODEL = "accounts.User"
 
 
 # Password validation
