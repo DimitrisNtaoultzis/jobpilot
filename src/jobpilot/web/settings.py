@@ -62,7 +62,8 @@ ROOT_URLCONF = "jobpilot.web.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # Project-wide templates (base.html, home.html) live next to this file.
+        "DIRS": [Path(__file__).resolve().parent / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -87,6 +88,12 @@ DATABASES = {"default": env.db("DATABASE_URL")}
 # https://docs.djangoproject.com/en/6.1/topics/auth/customizing/#substituting-a-custom-user-model
 
 AUTH_USER_MODEL = "accounts.User"
+
+# Where @login_required sends anonymous users, and where login/logout redirect to.
+# These accept URL pattern names as well as paths.
+LOGIN_URL = "accounts:login"
+LOGIN_REDIRECT_URL = "home"
+LOGOUT_REDIRECT_URL = "home"
 
 
 # Password validation
