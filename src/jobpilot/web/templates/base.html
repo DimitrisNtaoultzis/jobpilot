@@ -9,6 +9,9 @@
   <header>
     <a href="{% url 'home' %}">JobPilot</a>
     {% if user.is_authenticated %}
+      <a href="{% url 'jobs:cv_list' %}">My CVs</a>
+      <a href="{% url 'jobs:job_list' %}">My jobs</a>
+      <a href="{% url 'jobs:analysis_list' %}">My analyses</a>
       <span>Hello, {{ user.username }}</span>
       <form method="post" action="{% url 'accounts:logout' %}">
         {% csrf_token %}

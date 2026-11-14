@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}My CVs · JobPilot{% endblock %}
+
+{% block content %}
+  <h1>My CVs</h1>
+  <p><a href="{% url 'jobs:cv_create' %}">Add a CV</a></p>
+  <ul>
+    {% for cv in cvs %}
+      <li>{{ cv.title }} ({{ cv.created_at|date:"Y-m-d" }})</li>
+    {% empty %}
+      <li>No CVs yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}My analyses · JobPilot{% endblock %}
+
+{% block content %}
+  <h1>My analyses</h1>
+  <p><a href="{% url 'jobs:analysis_create' %}">New analysis</a></p>
+  <ul>
+    {% for analysis in analyses %}
+      <li>{{ analysis.cv }} vs {{ analysis.job_posting }}: {{ analysis.get_status_display }}</li>
+    {% empty %}
+      <li>No analyses yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
