@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Add a job posting · JobPilot{% endblock %}
+
+{% block content %}
+  <h1>Add a job posting</h1>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Save</button>
+  </form>
+  <p><a href="{% url 'jobs:job_list' %}">Back to my job postings</a></p>
+{% endblock %}

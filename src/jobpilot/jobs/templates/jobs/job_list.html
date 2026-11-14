@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}My jobs · JobPilot{% endblock %}
+
+{% block content %}
+  <h1>My job postings</h1>
+  <p><a href="{% url 'jobs:job_create' %}">Add a job posting</a></p>
+  <ul>
+    {% for job in jobs %}
+      <li>
+        {{ job }}
+        {% if job.url %}
+          {# noopener/noreferrer: the URL is user-provided and opens in a new tab. #}
+          (<a href="{{ job.url }}" target="_blank" rel="noopener noreferrer">link</a>)
+        {% endif %}
+      </li>
+    {% empty %}
+      <li>No job postings yet.</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
