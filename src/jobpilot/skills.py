@@ -8,6 +8,12 @@ SKILL_ALIASES: dict[str, str] = {
     "py": "python",
     "js": "javascript",
     "ts": "typescript",
+    # Common AI/ML abbreviations: the LLM keeps whichever form each text uses
+    "rag": "retrieval-augmented generation",
+    "llm": "large language models",
+    "llms": "large language models",
+    "ml": "machine learning",
+    "nlp": "natural language processing",
 }
 
 

@@ -1,5 +1,6 @@
 """Skill extraction with the LLM: the schema we ask for and the prompt."""
 
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -46,3 +47,15 @@ def build_messages(cv_text: str, job_title: str, job_description: str) -> list[B
         f"<cv>\n{cv_text}\n</cv>"
     )
     return [SystemMessage(SYSTEM_PROMPT), HumanMessage(user_message)]
+
+
+async def extract_skills(
+    model: BaseChatModel, cv_text: str, job_title: str, job_description: str
+) -> SkillExtraction:
+    """Ask the model for the skills in the job posting and in the CV."""
+    # json_schema + strict: Groq's constrained decoding guarantees the answer fits the schema.
+    structured_model = model.with_structured_output(
+        SkillExtraction, method="json_schema", strict=True
+    )
+    # ainvoke, not invoke: inside async code a blocking call would freeze the event loop.
+    return await structured_model.ainvoke(build_messages(cv_text, job_title, job_description))

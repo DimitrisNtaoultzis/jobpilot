@@ -9,6 +9,13 @@ def test_skills_match_after_normalization():
     assert result.match_score == 1.0
 
 
+def test_an_abbreviation_matches_the_full_name():
+    # Real case: the job said "Retrieval-Augmented Generation", the CV said "RAG".
+    result = compare_skills(job_skills=["Retrieval-Augmented Generation"], cv_skills=["RAG"])
+
+    assert result.matched_skills == ["Retrieval-Augmented Generation"]
+
+
 def test_missing_skills_and_partial_score():
     result = compare_skills(job_skills=["Python", "Docker"], cv_skills=["Python"])
 

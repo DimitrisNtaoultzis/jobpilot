@@ -2,7 +2,12 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-MAX_TEXT_LENGTH = 50_000  # characters; keeps LLM requests (and their cost) bounded
+# Length limits in characters, so that one request fits Groq's free tier (8K tokens/minute).
+# Measured: ~3.5 chars per input token for English text. Budget: 8,000 tokens minus ~1,000
+# output, ~500 prompt/schema and ~500 margin leaves ~6,000 tokens (~21,000 chars) for both
+# texts. Greek text needs more tokens per character, so the margin matters.
+MAX_CV_LENGTH = 12_000
+MAX_JOB_DESCRIPTION_LENGTH = 8_000
 
 
 class AnalyzeRequest(BaseModel):
@@ -11,9 +16,9 @@ class AnalyzeRequest(BaseModel):
     # Strip surrounding whitespace before validation, so "   " fails min_length=1.
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    cv_text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    cv_text: str = Field(min_length=1, max_length=MAX_CV_LENGTH)
     job_title: str = Field(min_length=1, max_length=200)
-    job_description: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    job_description: str = Field(min_length=1, max_length=MAX_JOB_DESCRIPTION_LENGTH)
 
 
 class AnalyzeResponse(BaseModel):

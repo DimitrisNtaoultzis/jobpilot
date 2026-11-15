@@ -2,8 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from jobpilot.ai_service.extraction import SkillExtraction
+from jobpilot.ai_service.llm import get_chat_model
 from jobpilot.ai_service.main import app
-from jobpilot.ai_service.schemas import MAX_TEXT_LENGTH, AnalyzeResponse
+from jobpilot.ai_service.schemas import (
+    MAX_CV_LENGTH,
+    MAX_JOB_DESCRIPTION_LENGTH,
+    AnalyzeResponse,
+)
 
 VALID_PAYLOAD = {
     "cv_text": "Python developer",
@@ -12,10 +18,45 @@ VALID_PAYLOAD = {
 }
 
 
+class FakeModel:
+    """Stands in for the chat model: returns a fixed extraction, or raises an error.
+
+    A stub (fixed answer) and a spy (records how it was called). Duck typing: it does
+    not subclass BaseChatModel, it just has the methods our code calls.
+    """
+
+    def __init__(self, extraction=None, error=None):
+        self.extraction = extraction
+        self.error = error
+        self.structured_output_kwargs = None
+        self.messages = None
+
+    def with_structured_output(self, schema, **kwargs):
+        self.structured_output_kwargs = kwargs  # lets tests check method/strict
+        return self
+
+    async def ainvoke(self, messages):
+        self.messages = messages  # lets tests check what was sent
+        if self.error:
+            raise self.error
+        return self.extraction
+
+
 @pytest.fixture
 def api_client():
     # Not named "client": that name belongs to pytest-django's Django test client.
     return TestClient(app)
+
+
+@pytest.fixture
+def fake_model():
+    model = FakeModel(
+        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+    )
+    # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
+    app.dependency_overrides[get_chat_model] = lambda: model
+    yield model
+    app.dependency_overrides.clear()
 
 
 def test_health(api_client):
@@ -25,7 +66,7 @@ def test_health(api_client):
     assert response.json() == {"status": "ok"}
 
 
-def test_analyze_returns_the_response_shape(api_client):
+def test_analyze_returns_the_response_shape(api_client, fake_model):
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
     assert response.status_code == 200
@@ -35,6 +76,35 @@ def test_analyze_returns_the_response_shape(api_client):
         "missing_skills",
         "match_score",
     }
+
+
+def test_analyze_compares_the_extracted_skills(api_client, fake_model):
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    assert response.json() == {
+        "required_skills": ["Python", "Docker"],
+        "matched_skills": ["Python"],
+        "missing_skills": ["Docker"],
+        "match_score": 0.5,
+    }
+
+
+def test_analyze_uses_strict_structured_output_and_sends_the_texts(api_client, fake_model):
+    api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    assert fake_model.structured_output_kwargs == {"method": "json_schema", "strict": True}
+    user_message = fake_model.messages[-1].content
+    assert "Python developer" in user_message  # the CV text
+    assert "We need Python" in user_message  # the job description
+
+
+def test_analyze_returns_502_when_the_model_fails(api_client, fake_model):
+    fake_model.error = RuntimeError("Groq is down")
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    assert response.status_code == 502
+    assert "Groq is down" not in response.text  # internal details stay in the logs
 
 
 def test_analyze_rejects_a_missing_field(api_client):
@@ -47,12 +117,21 @@ def test_analyze_rejects_a_missing_field(api_client):
 
 
 # Empty, whitespace only (stripped first), and one character over the limit.
-@pytest.mark.parametrize("cv_text", ["", "   ", "x" * (MAX_TEXT_LENGTH + 1)])
+@pytest.mark.parametrize("cv_text", ["", "   ", "x" * (MAX_CV_LENGTH + 1)])
 def test_analyze_rejects_invalid_cv_text(api_client, cv_text):
     response = api_client.post("/analyze", json={**VALID_PAYLOAD, "cv_text": cv_text})
 
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "cv_text"]
+
+
+def test_analyze_rejects_a_too_long_job_description(api_client):
+    too_long = "x" * (MAX_JOB_DESCRIPTION_LENGTH + 1)
+
+    response = api_client.post("/analyze", json={**VALID_PAYLOAD, "job_description": too_long})
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "job_description"]
 
 
 def test_response_schema_rejects_a_score_above_one():
