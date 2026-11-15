@@ -20,6 +20,29 @@ jobs:
   lint-and-test:
     name: Lint & test
     runs-on: ubuntu-latest
+
+    # A throwaway Postgres for the tests, same image as docker-compose.yml.
+    # The health check makes the job wait until the database is ready.
+    services:
+      db:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: jobpilot
+          POSTGRES_PASSWORD: jobpilot
+          POSTGRES_DB: jobpilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jobpilot -d jobpilot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    # Settings that come from .env locally. CI-only values, not real secrets.
+    env:
+      SECRET_KEY: ci-only-insecure-key
+      DATABASE_URL: postgresql://jobpilot:jobpilot@localhost:5432/jobpilot
+
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -41,6 +64,10 @@ jobs:
 
       - name: Run pre-commit checks (ruff, file checks, uv lock)
         run: uv run pre-commit run --all-files --show-diff-on-failure
+
+      # Fails if a model changed without a matching migration (--dry-run writes nothing)
+      - name: Check for missing migrations
+        run: uv run python manage.py makemigrations --check --dry-run
 
       - name: Run tests
         run: uv run pytest
