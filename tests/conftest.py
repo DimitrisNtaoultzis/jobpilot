@@ -6,7 +6,21 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from jobpilot.ai_service.config import get_settings
 from jobpilot.jobs.models import CV, JobPosting
+
+
+@pytest.fixture(autouse=True)
+def fake_groq_api_key(monkeypatch):
+    """Never let a test reach the real Groq API with the developer's real key.
+
+    Environment variables take precedence over .env, so a fake key wins; an accidental
+    real call then fails with 401 instead of spending tokens.
+    """
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-real")
+    get_settings.cache_clear()  # drop settings cached by an earlier test (lru_cache)
+    yield
+    get_settings.cache_clear()
 
 
 def _build_pdf(text=None, user_password=None, owner_password=None) -> bytes:
