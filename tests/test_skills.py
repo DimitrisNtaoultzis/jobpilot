@@ -12,6 +12,10 @@ from jobpilot.skills import normalize_skill
         ("K8s", "kubernetes"),  # known alias
         ("postgres", "postgresql"),  # known alias
         ("Postgres", "postgresql"),  # known alias with uppercase letter
+        ("RAG", "retrieval-augmented generation"),  # AI/ML abbreviations
+        ("LLMs", "large language models"),
+        ("ML", "machine learning"),
+        ("NLP", "natural language processing"),
     ],
 )
 def test_normalize_skill(raw: str, expected: str) -> None:
