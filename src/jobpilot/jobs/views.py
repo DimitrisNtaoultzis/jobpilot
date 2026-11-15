@@ -2,7 +2,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.urls import reverse_lazy
 from django.views.generic import CreateView, ListView
 
-from .forms import AnalysisForm
+from .forms import AnalysisForm, CVForm
 from .models import CV, Analysis, JobPosting
 
 # LoginRequiredMixin must come first (leftmost), so its check runs before the view's logic.
@@ -18,9 +18,7 @@ class CVListView(LoginRequiredMixin, ListView):
 
 
 class CVCreateView(LoginRequiredMixin, CreateView):
-    model = CV
-    # Never list "user" here: the owner is set on the server, not taken from the form.
-    fields = ["title", "text"]
+    form_class = CVForm
     template_name = "jobs/cv_form.html"
     success_url = reverse_lazy("jobs:cv_list")
 
