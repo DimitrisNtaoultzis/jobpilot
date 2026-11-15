@@ -4,7 +4,8 @@
 
 {% block content %}
   <h1>Add a CV</h1>
-  <form method="post">
+  {# multipart/form-data: without it the browser sends only the file name, not its content. #}
+  <form method="post" enctype="multipart/form-data">
     {% csrf_token %}
     {{ form.as_p }}
     <button type="submit">Save</button>
