@@ -42,6 +42,7 @@ uv run python manage.py migrate    # create the database tables
 
 ```bash
 uv run python manage.py runserver    # start the dev server at http://127.0.0.1:8000/
+uv run pytest                        # run the tests (needs the database running)
 uv run ruff check .                  # lint
 uv run ruff format .                 # format
 uv run pre-commit run --all-files    # run all checks manually
@@ -53,7 +54,7 @@ docker compose down                  # remove the container (data is kept in the
 ## Roadmap
 
 - [x] Phase 0: Project foundations (tooling, CI)
-- [ ] Phase 1: Database & Django web app
+- [x] Phase 1: Database & Django web app
 - [ ] Phase 2: FastAPI AI service & LangGraph agent
 - [ ] Phase 3: Classical ML (job classification)
 - [ ] Phase 4: LoRA fine-tuning
