@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     groq_api_key: SecretStr
     # A setting, not hard-coded: Groq's model catalog changes often.
     groq_model: str = "openai/gpt-oss-120b"
+    # Same DATABASE_URL as Django (one Postgres server; the AI service uses the "ai" schema).
+    # SecretStr because the URL contains the password. No default: fail fast if missing.
+    database_url: SecretStr
 
 
 @lru_cache
