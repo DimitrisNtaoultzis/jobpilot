@@ -4,9 +4,14 @@ import numpy as np
 import psycopg
 from fastembed import TextEmbedding
 from psycopg.rows import class_row
+from psycopg_pool import ConnectionPool
 
 from .embeddings import embed_query
 from .schemas import ResourceMatch, SkillResources
+
+# Seconds to wait for a pooled connection (the pool's default is 30): if the database is
+# down, give up quickly so the request can still return its skill analysis.
+POOL_TIMEOUT = 5.0
 
 # <=> is pgvector's cosine distance (1 - cosine similarity).
 # ORDER BY uses the distance expression itself (not the alias) so that a vector index,
@@ -58,3 +63,20 @@ def find_learning_resources(
         )
         for skill in skills
     ]
+
+
+class ResourceFinder:
+    """Finds learning resources for skills, with a connection pool and an embedding model.
+
+    One object, created at startup, so the endpoint has a single dependency to call
+    (and tests a single dependency to replace). Calling it is blocking.
+    """
+
+    def __init__(self, pool: ConnectionPool, model: TextEmbedding) -> None:
+        self.pool = pool
+        self.model = model
+
+    def __call__(self, skills: list[str]) -> list[SkillResources]:
+        # Borrow a connection; it goes back to the pool at the end of the block
+        with self.pool.connection(timeout=POOL_TIMEOUT) as conn:
+            return find_learning_resources(conn, self.model, skills)

@@ -1,12 +1,18 @@
 """Search tests against the real (test) Postgres, with hand-made vectors whose
 similarities are known in advance. pg_conn comes from conftest.py."""
 
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
 
 from jobpilot.ai_service.embeddings import EMBEDDING_DIM, QUERY_PREFIX
 from jobpilot.ai_service.ingest import ensure_schema
-from jobpilot.ai_service.retrieval import find_learning_resources, search_resources
+from jobpilot.ai_service.retrieval import (
+    ResourceFinder,
+    find_learning_resources,
+    search_resources,
+)
 
 
 def basis(i):
@@ -125,3 +131,31 @@ def test_find_learning_resources_applies_the_limit_per_skill(resources_table, ax
 
 def test_no_missing_skills_gives_no_learning_resources(resources_table, axis_model):
     assert find_learning_resources(resources_table, axis_model, []) == []
+
+
+# ResourceFinder: what the FastAPI app calls, holding the pool and the model
+
+
+class FakePool:
+    """Stands in for psycopg_pool.ConnectionPool: lends the test connection."""
+
+    def __init__(self, conn):
+        self.conn = conn
+        self.timeout = None
+
+    @contextmanager
+    def connection(self, timeout=None):
+        self.timeout = timeout
+        yield self.conn
+
+
+def test_resource_finder_searches_with_a_pooled_connection(resources_table, axis_model):
+    pool = FakePool(resources_table)
+    finder = ResourceFinder(pool, axis_model)
+
+    [entry] = finder(["Kubernetes"])
+
+    assert entry.skill == "Kubernetes"
+    assert entry.resources[0].title == "A"
+    # A bounded wait: if the database is down, fail fast instead of hanging the request
+    assert pool.timeout is not None
