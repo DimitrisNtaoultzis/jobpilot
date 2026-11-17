@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import numpy as np
-
 from jobpilot.ai_service.embeddings import (
     EMBEDDING_DIM,
     QUERY_PREFIX,
@@ -11,23 +9,11 @@ from jobpilot.ai_service.embeddings import (
 
 SCHEMA_SQL = Path(__file__).resolve().parents[1] / "src/jobpilot/ai_service/schema.sql"
 
-
-class FakeEmbeddingModel:
-    """Stands in for fastembed's TextEmbedding: records the texts, returns simple vectors.
-
-    The i-th text gets a vector filled with the value i, so tests can check the order.
-    """
-
-    def __init__(self):
-        self.texts = None
-
-    def embed(self, texts):
-        self.texts = list(texts)
-        return (np.full(EMBEDDING_DIM, float(i)) for i in range(len(self.texts)))
+# fake_embedding_model comes from conftest.py
 
 
-def test_embed_query_adds_the_bge_query_prefix():
-    model = FakeEmbeddingModel()
+def test_embed_query_adds_the_bge_query_prefix(fake_embedding_model):
+    model = fake_embedding_model
 
     vector = embed_query(model, "Docker")
 
@@ -35,16 +21,16 @@ def test_embed_query_adds_the_bge_query_prefix():
     assert vector.shape == (EMBEDDING_DIM,)
 
 
-def test_embed_passages_sends_the_texts_unchanged():
-    model = FakeEmbeddingModel()
+def test_embed_passages_sends_the_texts_unchanged(fake_embedding_model):
+    model = fake_embedding_model
 
     embed_passages(model, ["SQL Tutorial", "Docker for Beginners"])
 
     assert model.texts == ["SQL Tutorial", "Docker for Beginners"]
 
 
-def test_embed_passages_returns_one_vector_per_text_in_order():
-    model = FakeEmbeddingModel()
+def test_embed_passages_returns_one_vector_per_text_in_order(fake_embedding_model):
+    model = fake_embedding_model
 
     vectors = embed_passages(model, ["first", "second", "third"])
 
