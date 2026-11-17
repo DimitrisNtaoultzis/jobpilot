@@ -2,11 +2,14 @@
 
 import io
 
+import numpy as np
 import pytest
+from django.db import connection
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from jobpilot.ai_service.config import get_settings
+from jobpilot.ai_service.embeddings import EMBEDDING_DIM
 from jobpilot.jobs.models import CV, JobPosting
 
 
@@ -83,3 +86,37 @@ def make_cv_and_job():
         return cv, job
 
     return _make
+
+
+# AI service: embeddings and the "ai" database schema.
+
+
+class FakeEmbeddingModel:
+    """Stands in for fastembed's TextEmbedding: records the texts, returns simple vectors.
+
+    The i-th text gets a vector filled with the value i, so tests can check the order.
+    """
+
+    def __init__(self):
+        self.texts = None
+
+    def embed(self, texts):
+        self.texts = list(texts)
+        return (np.full(EMBEDDING_DIM, float(i)) for i in range(len(self.texts)))
+
+
+@pytest.fixture
+def fake_embedding_model():
+    return FakeEmbeddingModel()
+
+
+@pytest.fixture
+def pg_conn(db):
+    """Raw psycopg connection to the test database, for code that does not use the ORM.
+
+    It is Django's own connection, so it runs inside the test's transaction (the `db`
+    fixture): everything, even CREATE SCHEMA/TABLE, is rolled back after the test.
+    Code under test must therefore never commit; its caller decides.
+    """
+    connection.ensure_connection()
+    return connection.connection

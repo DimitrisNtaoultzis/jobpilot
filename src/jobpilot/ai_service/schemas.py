@@ -21,6 +21,23 @@ class AnalyzeRequest(BaseModel):
     job_description: str = Field(min_length=1, max_length=MAX_JOB_DESCRIPTION_LENGTH)
 
 
+class ResourceMatch(BaseModel):
+    """A learning resource found by a search, with its similarity to the query."""
+
+    title: str
+    url: str
+    description: str
+    # Cosine similarity: useful for ranking, NOT a reliable relevance score on its own
+    similarity: float
+
+
+class SkillResources(BaseModel):
+    """Learning resources for one missing skill, most similar first."""
+
+    skill: str
+    resources: list[ResourceMatch]
+
+
 class AnalyzeResponse(BaseModel):
     """The result of the analysis; Django stores it in Analysis.result."""
 
@@ -28,3 +45,6 @@ class AnalyzeResponse(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     match_score: float = Field(ge=0, le=1)
+    # One entry per missing skill. Empty when nothing is missing, or when the search
+    # failed: the skill analysis is still useful without it (graceful degradation).
+    learning_resources: list[SkillResources] = Field(default_factory=list)

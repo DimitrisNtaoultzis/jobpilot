@@ -4,11 +4,13 @@ from pydantic import ValidationError
 
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.llm import get_chat_model
-from jobpilot.ai_service.main import app
+from jobpilot.ai_service.main import app, get_resource_finder
 from jobpilot.ai_service.schemas import (
     MAX_CV_LENGTH,
     MAX_JOB_DESCRIPTION_LENGTH,
     AnalyzeResponse,
+    ResourceMatch,
+    SkillResources,
 )
 
 VALID_PAYLOAD = {
@@ -42,9 +44,41 @@ class FakeModel:
         return self.extraction
 
 
+class FakeResourceFinder:
+    """Stands in for ResourceFinder (pool + embedding model): no database needed.
+
+    Records the skills it was called with; returns fixed results, or raises an error.
+    """
+
+    def __init__(self, results=None, error=None):
+        self.results = results or []
+        self.error = error
+        self.skills = None
+
+    def __call__(self, skills):
+        self.skills = skills
+        if self.error:
+            raise self.error
+        return self.results
+
+
+DOCKER_RESOURCES = SkillResources(
+    skill="Docker",
+    resources=[
+        ResourceMatch(
+            title="Docker Get Started",
+            url="https://docs.docker.com/get-started/",
+            description="Official Docker tutorial.",
+            similarity=0.8,
+        )
+    ],
+)
+
+
 @pytest.fixture
 def api_client():
     # Not named "client": that name belongs to pytest-django's Django test client.
+    # TestClient without "with" does not run the lifespan: no pool, no model loading.
     return TestClient(app)
 
 
@@ -56,7 +90,16 @@ def fake_model():
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model
     yield model
-    app.dependency_overrides.clear()
+    app.dependency_overrides.pop(get_chat_model)
+
+
+@pytest.fixture(autouse=True)
+def fake_finder():
+    """Every test gets a finder that returns no resources (the lifespan never runs here)."""
+    finder = FakeResourceFinder()
+    app.dependency_overrides[get_resource_finder] = lambda: finder
+    yield finder
+    app.dependency_overrides.pop(get_resource_finder)
 
 
 def test_health(api_client):
@@ -75,6 +118,7 @@ def test_analyze_returns_the_response_shape(api_client, fake_model):
         "matched_skills",
         "missing_skills",
         "match_score",
+        "learning_resources",
     }
 
 
@@ -86,7 +130,38 @@ def test_analyze_compares_the_extracted_skills(api_client, fake_model):
         "matched_skills": ["Python"],
         "missing_skills": ["Docker"],
         "match_score": 0.5,
+        "learning_resources": [],  # the default fake finder finds nothing
     }
+
+
+def test_analyze_searches_resources_for_the_missing_skills(api_client, fake_model, fake_finder):
+    fake_finder.results = [DOCKER_RESOURCES]
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    assert fake_finder.skills == ["Docker"]  # only the missing skills, not "Python"
+    assert response.json()["learning_resources"] == [DOCKER_RESOURCES.model_dump()]
+
+
+def test_analyze_skips_the_search_when_nothing_is_missing(api_client, fake_model, fake_finder):
+    fake_model.extraction = SkillExtraction(job_skills=["Python"], cv_skills=["Python"])
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    assert fake_finder.skills is None  # never called: no database round trip
+    assert response.json()["learning_resources"] == []
+
+
+def test_analyze_still_succeeds_when_the_search_fails(api_client, fake_model, fake_finder):
+    fake_finder.error = RuntimeError("database is down")
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    # Graceful degradation: the skill analysis is returned without resources
+    assert response.status_code == 200
+    assert response.json()["missing_skills"] == ["Docker"]
+    assert response.json()["learning_resources"] == []
+    assert "database is down" not in response.text
 
 
 def test_analyze_uses_strict_structured_output_and_sends_the_texts(api_client, fake_model):

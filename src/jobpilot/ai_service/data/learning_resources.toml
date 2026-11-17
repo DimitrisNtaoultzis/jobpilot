@@ -1,0 +1,272 @@
+# Curated learning resources for RAG: free resources for skills common in
+# AI/ML engineering job postings.
+#
+# Rules:
+# - Every URL must be opened and checked before it is added. Never add a URL from memory.
+# - The URL is the unique key: ingestion upserts on it.
+# - Title and description are what we embed ("{title}: {description}"), so the
+#   description should name the topics a learner will find there.
+# - After any edit, re-run the ingestion so the database matches this file.
+#
+# URLs last checked: 2026-11-17.
+
+# --- Programming and software engineering -----------------------------------
+
+[[resources]]
+title = "The Python Tutorial"
+url = "https://docs.python.org/3/tutorial/"
+description = """
+Official Python tutorial: data structures, control flow, functions, modules,
+classes, exceptions, the standard library and virtual environments."""
+
+[[resources]]
+title = "Pro Git"
+url = "https://git-scm.com/book/en/v2"
+description = """
+Free book on Git version control: commits, branching, merging, rebasing, remotes,
+GitHub workflows and Git internals."""
+
+[[resources]]
+title = "pytest: Get Started"
+url = "https://docs.pytest.org/en/stable/getting-started.html"
+description = """
+Getting started with pytest for Python testing: writing test functions,
+assertions, expected exceptions, fixtures and running test suites."""
+
+[[resources]]
+title = "Pydantic Validation"
+url = "https://pydantic.dev/docs/validation/latest/get-started/"
+description = """
+Pydantic documentation: data validation with Python type hints, models, fields,
+validators, settings management and JSON schema."""
+
+[[resources]]
+title = "Learn the Linux Command Line"
+url = "https://linuxcommand.org/"
+description = """
+Learn the Linux command line and the Bash shell: navigating the file system,
+permissions, processes, pipes, redirection and writing shell scripts."""
+
+[[resources]]
+title = "MDN: Overview of HTTP"
+url = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview"
+description = """
+How HTTP works: clients and servers, requests and responses, methods, status
+codes and headers. The foundation for building and consuming REST APIs."""
+
+# --- Web frameworks and APIs -------------------------------------------------
+
+[[resources]]
+title = "FastAPI Tutorial - User Guide"
+url = "https://fastapi.tiangolo.com/tutorial/"
+description = """
+Official FastAPI tutorial: building REST APIs in Python with path and query
+parameters, request bodies with Pydantic, dependency injection, async endpoints,
+security and testing."""
+
+[[resources]]
+title = "Writing your first Django app"
+url = "https://docs.djangoproject.com/en/stable/intro/tutorial01/"
+description = """
+Official Django tutorial: building a web application with models, the ORM,
+migrations, views, URL routing, templates, forms, the admin site and tests."""
+
+# --- Data and databases ------------------------------------------------------
+
+[[resources]]
+title = "SQLBolt"
+url = "https://sqlbolt.com/"
+description = """
+Interactive SQL lessons and exercises: SELECT queries, filtering, sorting,
+JOINs, aggregates with GROUP BY, and creating and altering tables."""
+
+[[resources]]
+title = "PostgreSQL Tutorial"
+url = "https://www.postgresql.org/docs/current/tutorial.html"
+description = """
+Official PostgreSQL tutorial: creating databases and tables, querying with SQL,
+joins, aggregates, views, foreign keys, transactions and window functions."""
+
+[[resources]]
+title = "pgvector"
+url = "https://github.com/pgvector/pgvector"
+description = """
+Vector similarity search for PostgreSQL: storing embeddings, cosine and L2
+distance, HNSW and IVFFlat indexes for approximate nearest neighbor search."""
+
+[[resources]]
+title = "pandas: Getting started"
+url = "https://pandas.pydata.org/docs/getting_started/index.html"
+description = """
+Getting started with pandas for data analysis in Python: DataFrames, reading CSV
+files, selecting and filtering data, grouping, merging and plotting."""
+
+[[resources]]
+title = "NumPy: the absolute basics for beginners"
+url = "https://numpy.org/doc/stable/user/absolute_beginners.html"
+description = """
+NumPy basics for numerical computing in Python: arrays, shapes, indexing,
+broadcasting, vectorized operations and basic linear algebra."""
+
+[[resources]]
+title = "Apache Spark Quick Start"
+url = "https://spark.apache.org/docs/latest/quick-start.html"
+description = """
+Quick start for Apache Spark big data processing with PySpark: DataFrames,
+transformations and actions, caching and running distributed jobs."""
+
+[[resources]]
+title = "OpenIntro Statistics"
+url = "https://www.openintro.org/book/os/"
+description = """
+Free statistics textbook: probability, distributions, hypothesis testing,
+confidence intervals, inference and linear and logistic regression."""
+
+# --- Machine learning and deep learning --------------------------------------
+
+[[resources]]
+title = "Google Machine Learning Crash Course"
+url = "https://developers.google.com/machine-learning/crash-course"
+description = """
+Introductory machine learning course: linear and logistic regression,
+classification, training and loss, overfitting, feature engineering and
+neural networks."""
+
+[[resources]]
+title = "scikit-learn User Guide"
+url = "https://scikit-learn.org/stable/user_guide.html"
+description = """
+scikit-learn guide to classical machine learning in Python: classification,
+regression, clustering, preprocessing, pipelines, cross-validation and
+model evaluation metrics."""
+
+[[resources]]
+title = "Kaggle Learn"
+url = "https://www.kaggle.com/learn"
+description = """
+Short hands-on courses with notebooks: Python, pandas, data visualization,
+intro and intermediate machine learning, feature engineering and SQL."""
+
+[[resources]]
+title = "PyTorch: Learn the Basics"
+url = "https://docs.pytorch.org/tutorials/beginner/basics/intro.html"
+description = """
+Official PyTorch tutorial for deep learning: tensors, datasets and data loaders,
+building neural networks, autograd, training loops, saving and loading models."""
+
+[[resources]]
+title = "TensorFlow Tutorials"
+url = "https://www.tensorflow.org/tutorials"
+description = """
+Official TensorFlow and Keras tutorials for deep learning: image classification,
+text classification, training neural networks and deploying models."""
+
+[[resources]]
+title = "Practical Deep Learning for Coders"
+url = "https://course.fast.ai/"
+description = """
+Free fast.ai course on practical deep learning with PyTorch: computer vision,
+natural language processing, tabular data, training and deploying models."""
+
+[[resources]]
+title = "Dive into Deep Learning"
+url = "https://d2l.ai/"
+description = """
+Interactive deep learning book with code: neural networks, optimization,
+convolutional and recurrent networks, attention mechanisms and transformers."""
+
+# --- NLP, LLMs and AI applications -------------------------------------------
+
+[[resources]]
+title = "Hugging Face LLM Course"
+url = "https://huggingface.co/learn/llm-course"
+description = """
+Course on natural language processing and large language models (LLMs) with
+Hugging Face: transformers, tokenizers, fine-tuning pretrained models and
+datasets."""
+
+[[resources]]
+title = "Hugging Face Transformers Quickstart"
+url = "https://huggingface.co/docs/transformers/quicktour"
+description = """
+Quickstart for the Transformers library: loading pretrained models and
+tokenizers, pipelines for inference, and training or fine-tuning models."""
+
+[[resources]]
+title = "Advanced RAG on Hugging Face documentation using LangChain"
+url = "https://huggingface.co/learn/cookbook/en/advanced_rag"
+description = """
+Hands-on notebook on Retrieval-Augmented Generation (RAG): chunking documents,
+embeddings, vector search, reranking and answering questions with an LLM."""
+
+[[resources]]
+title = "Prompt Engineering Guide"
+url = "https://www.promptingguide.ai/"
+description = """
+Guide to prompt engineering for large language models: zero-shot and few-shot
+prompting, chain-of-thought, RAG, agents and LLM risks such as prompt injection."""
+
+[[resources]]
+title = "LangChain overview"
+url = "https://docs.langchain.com/oss/python/langchain/overview"
+description = """
+LangChain documentation for building LLM applications in Python: chat models,
+tools, agents, structured output, memory and retrieval."""
+
+[[resources]]
+title = "LangGraph overview"
+url = "https://docs.langchain.com/oss/python/langgraph/overview"
+description = """
+LangGraph documentation for building stateful AI agents as graphs: state,
+nodes and edges, persistence, human-in-the-loop and streaming."""
+
+# --- MLOps, DevOps and cloud -------------------------------------------------
+
+[[resources]]
+title = "Made With ML"
+url = "https://madewithml.com/"
+description = """
+MLOps course on taking machine learning to production: data, training,
+experiment tracking, testing, serving, CI/CD and monitoring ML systems."""
+
+[[resources]]
+title = "MLflow Documentation"
+url = "https://mlflow.org/docs/latest/"
+description = """
+MLflow for the machine learning lifecycle: experiment tracking, model registry,
+model packaging and deployment, and evaluation of ML and LLM models."""
+
+[[resources]]
+title = "Docker Get Started"
+url = "https://docs.docker.com/get-started/"
+description = """
+Official Docker tutorial: containers and images, writing a Dockerfile, building
+and running containers, volumes, networking and Docker Compose."""
+
+[[resources]]
+title = "Learn Kubernetes Basics"
+url = "https://kubernetes.io/docs/tutorials/kubernetes-basics/"
+description = """
+Official Kubernetes tutorial on container orchestration: clusters, deploying
+applications, pods, services, scaling and rolling updates."""
+
+[[resources]]
+title = "GitHub Actions documentation"
+url = "https://docs.github.com/en/actions"
+description = """
+GitHub Actions for CI/CD: workflows, jobs and steps, running tests on every
+push and pull request, build pipelines and automated deployments."""
+
+[[resources]]
+title = "Terraform Tutorials"
+url = "https://developer.hashicorp.com/terraform/tutorials"
+description = """
+Terraform tutorials for infrastructure as code (IaC): providers, resources,
+variables, state and provisioning cloud infrastructure on AWS, Azure and GCP."""
+
+[[resources]]
+title = "Microsoft Azure Fundamentals: Describe cloud concepts"
+url = "https://learn.microsoft.com/en-us/training/paths/microsoft-azure-fundamentals-describe-cloud-concepts/"
+description = """
+Microsoft Learn path on cloud computing concepts and Microsoft Azure: cloud
+models, IaaS, PaaS and SaaS, scalability, reliability and pricing."""
