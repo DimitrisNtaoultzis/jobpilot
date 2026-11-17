@@ -35,13 +35,19 @@ uv sync                      # create .venv and install all dependencies (from u
 uv run pre-commit install    # enable the git hooks (once per clone)
 cp .env.example .env         # then fill in the values
 docker compose up -d         # start PostgreSQL + pgvector
-uv run python manage.py migrate    # create the database tables
+uv run python manage.py migrate    # create the Django database tables
+uv run python -m jobpilot.ai_service.ingest    # load the learning resources (RAG) into the database
 ```
+
+The AI service needs a free [Groq](https://console.groq.com/) API key in `.env` (`GROQ_API_KEY`).
+The first ingestion downloads the embedding model (~67 MB) to a local cache.
 
 **Useful commands:**
 
 ```bash
 uv run python manage.py runserver    # start the dev server at http://127.0.0.1:8000/
+uv run uvicorn jobpilot.ai_service.main:app --port 8001    # start the AI service; API docs at http://127.0.0.1:8001/docs
+uv run python -m jobpilot.ai_service.ingest    # re-run after editing src/jobpilot/ai_service/data/learning_resources.toml
 uv run pytest                        # run the tests (needs the database running)
 uv run ruff check .                  # lint
 uv run ruff format .                 # format
