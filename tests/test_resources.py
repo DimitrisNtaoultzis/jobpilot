@@ -54,6 +54,18 @@ def test_text_fields_are_stripped(write_toml):
     assert resource.title == "Docker Get Started"
 
 
+def test_line_breaks_and_repeated_spaces_inside_text_are_collapsed(write_toml):
+    # TOML multi-line strings keep the file's line breaks; the API should not show them
+    text = DOCKER.replace(
+        '"Official Docker tutorial: images, containers and Compose."',
+        '"""\nOfficial Docker tutorial:\nimages,   containers\nand Compose."""',
+    )
+
+    [resource] = load_resources(write_toml(text))
+
+    assert resource.description == "Official Docker tutorial: images, containers and Compose."
+
+
 def test_an_invalid_url_is_rejected(write_toml):
     text = DOCKER.replace("https://docs.docker.com/get-started/", "docs.docker.com")
 

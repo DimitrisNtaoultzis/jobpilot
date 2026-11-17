@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 # Inside the package, so the data ships with the code (e.g. in a Docker image)
 RESOURCES_FILE = Path(__file__).parent / "data" / "learning_resources.toml"
@@ -21,6 +21,17 @@ class LearningResource(BaseModel):
     title: str = Field(min_length=1)
     url: HttpUrl
     description: str = Field(min_length=1)
+
+    # mode="after": runs once the value is a valid, stripped, non-empty str
+    @field_validator("title", "description", mode="after")
+    @classmethod
+    def collapse_whitespace(cls, value: str) -> str:
+        """Turn line breaks and repeated spaces into single spaces.
+
+        TOML multi-line strings keep the file's line breaks, which should not reach
+        the API (or the stored text we embed).
+        """
+        return " ".join(value.split())
 
     @property
     def passage(self) -> str:
