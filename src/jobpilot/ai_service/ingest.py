@@ -31,6 +31,14 @@ ON CONFLICT (url) DO UPDATE SET
 """
 
 
+def ensure_schema(conn: psycopg.Connection) -> None:
+    """Create the "ai" schema objects if missing, and teach the connection the vector type."""
+    # Multiple statements in one execute() are allowed because no parameters are passed.
+    conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
+    # Only after schema.sql: it looks up the "vector" type, created by CREATE EXTENSION.
+    register_vector(conn)
+
+
 def sync_resources(
     conn: psycopg.Connection, model: TextEmbedding, resources: list[LearningResource]
 ) -> int:
@@ -38,10 +46,7 @@ def sync_resources(
 
     Never commits: the caller owns the transaction (main() commits; tests roll back).
     """
-    # Multiple statements in one execute() are allowed because no parameters are passed.
-    conn.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
-    # Only after schema.sql: it looks up the "vector" type, created by CREATE EXTENSION.
-    register_vector(conn)
+    ensure_schema(conn)
 
     vectors = embed_passages(model, [resource.passage for resource in resources])
     urls = [str(resource.url) for resource in resources]
