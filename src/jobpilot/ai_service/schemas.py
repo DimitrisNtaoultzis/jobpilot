@@ -1,6 +1,11 @@
 """Request/response schemas: the contract between the Django app and the AI service."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+# How important a missing skill is for the job (shared by the API and the LLM schema)
+Priority = Literal["must_have", "nice_to_have"]
 
 # Length limits in characters, so that one request fits Groq's free tier (8K tokens/minute).
 # Measured: ~3.5 chars per input token for English text. Budget: 8,000 tokens minus ~1,000
@@ -38,6 +43,13 @@ class SkillResources(BaseModel):
     resources: list[ResourceMatch]
 
 
+class SkillGap(BaseModel):
+    """A skill the candidate lacks, and how important it is for the job."""
+
+    skill: str
+    priority: Priority
+
+
 class AnalyzeResponse(BaseModel):
     """The result of the analysis; Django stores it in Analysis.result."""
 
@@ -45,6 +57,8 @@ class AnalyzeResponse(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     match_score: float = Field(ge=0, le=1)
+    # One entry per missing skill, in the same order. Empty until the gap review runs.
+    skill_gaps: list[SkillGap] = Field(default_factory=list)
     # One entry per missing skill. Empty when nothing is missing, or when the search
     # failed: the skill analysis is still useful without it (graceful degradation).
     learning_resources: list[SkillResources] = Field(default_factory=list)

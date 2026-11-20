@@ -77,6 +77,7 @@ def test_analyze_returns_the_response_shape(api_client, fake_model):
         "matched_skills",
         "missing_skills",
         "match_score",
+        "skill_gaps",
         "learning_resources",
     }
 
@@ -89,6 +90,7 @@ def test_analyze_compares_the_extracted_skills(api_client, fake_model):
         "matched_skills": ["Python"],
         "missing_skills": ["Docker"],
         "match_score": 0.5,
+        "skill_gaps": [],  # the graph has no gap review node yet
         "learning_resources": [],  # the default fake finder finds nothing
     }
 

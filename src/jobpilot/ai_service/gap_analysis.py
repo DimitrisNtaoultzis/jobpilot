@@ -1,13 +1,18 @@
 """Gap analysis with the LLM: review the skills that plain matching marked as missing."""
 
-from typing import Literal
-
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from jobpilot.skills import normalize_skill
+
+from .matching import match_score
+from .schemas import AnalyzeResponse, Priority, SkillGap
+
 
 # What the LLM returns (internal: Python checks it before use, see apply_gap_review).
+# Kept apart from the API schemas on purpose: the prompt and the API change for
+# different reasons, so rewording one must never change the other.
 # The docstrings and the field descriptions end up in the JSON Schema sent to the model,
 # so they are written for the model; notes for developers go in comments like this one.
 class CoveredSkill(BaseModel):
@@ -19,11 +24,11 @@ class CoveredSkill(BaseModel):
     )
 
 
-class SkillGap(BaseModel):
+class ReviewedGap(BaseModel):
     """A skill from the missing list that the candidate really lacks."""
 
     skill: str = Field(description="The skill from the missing list, exactly as given.")
-    priority: Literal["must_have", "nice_to_have"] = Field(
+    priority: Priority = Field(
         description=(
             "must_have if the job posting requires the skill; nice_to_have if it is "
             "described as a plus, a bonus, preferred or optional."
@@ -35,7 +40,7 @@ class GapReview(BaseModel):
     """The review of the missing skills: each one is either covered or a real gap."""
 
     covered: list[CoveredSkill]
-    gaps: list[SkillGap]
+    gaps: list[ReviewedGap]
 
 
 SYSTEM_PROMPT = """\
@@ -92,4 +97,53 @@ async def review_gaps(
     structured_model = model.with_structured_output(GapReview, method="json_schema", strict=True)
     return await structured_model.ainvoke(
         build_messages(missing_skills, cv_skills, job_title, job_description)
+    )
+
+
+def apply_gap_review(
+    result: AnalyzeResponse, cv_skills: list[str], review: GapReview
+) -> AnalyzeResponse:
+    """Apply the LLM's review to the result of plain matching, trusting only what checks out.
+
+    The prompt asks the model to follow the rules; this function enforces them:
+    - a skill counts as covered only if it was missing and its cv_skill is really in the CV,
+    - skills that were not missing are ignored (the model may not invent new ones),
+    - a skill the model put in both lists stays a gap ("when in doubt, it is a gap"),
+    - a missing skill the model forgot stays a gap with the cautious priority must_have.
+    Skills are compared by normalized name; the result keeps the job posting's names.
+    """
+    missing_keys = {normalize_skill(skill) for skill in result.missing_skills}
+    cv_keys = {normalize_skill(skill) for skill in cv_skills}
+
+    # The priority of each reviewed gap; for a duplicate, the first answer wins
+    priorities: dict[str, Priority] = {}
+    for gap in review.gaps:
+        key = normalize_skill(gap.skill)
+        if key in missing_keys:
+            priorities.setdefault(key, gap.priority)
+
+    covered_keys = {
+        normalize_skill(item.skill)
+        for item in review.covered
+        if normalize_skill(item.cv_skill) in cv_keys
+    }
+    covered_keys &= missing_keys  # only skills that were missing
+    covered_keys -= priorities.keys()  # in both lists: the gap wins
+
+    matched_keys = {normalize_skill(skill) for skill in result.matched_skills} | covered_keys
+    matched = [skill for skill in result.required_skills if normalize_skill(skill) in matched_keys]
+    missing = [s for s in result.missing_skills if normalize_skill(s) not in covered_keys]
+    skill_gaps = [
+        SkillGap(skill=skill, priority=priorities.get(normalize_skill(skill), "must_have"))
+        for skill in missing
+    ]
+
+    # A new object: the result passed in stays unchanged
+    return result.model_copy(
+        update={
+            "matched_skills": matched,
+            "missing_skills": missing,
+            "match_score": match_score(matched, result.required_skills),
+            "skill_gaps": skill_gaps,
+        }
     )

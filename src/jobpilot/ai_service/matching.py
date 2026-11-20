@@ -24,12 +24,16 @@ def compare_skills(job_skills: list[str], cv_skills: list[str]) -> AnalyzeRespon
 
     matched = [skill for skill in required if normalize_skill(skill) in cv_keys]
     missing = [skill for skill in required if normalize_skill(skill) not in cv_keys]
-    # Nothing to compare is not a match: 0.0 rather than a misleading 1.0
-    score = round(len(matched) / len(required), 2) if required else 0.0
 
     return AnalyzeResponse(
         required_skills=required,
         matched_skills=matched,
         missing_skills=missing,
-        match_score=score,
+        match_score=match_score(matched, required),
     )
+
+
+def match_score(matched: list[str], required: list[str]) -> float:
+    """The share of required skills that are matched, rounded to 2 decimals."""
+    # Nothing to compare is not a match: 0.0 rather than a misleading 1.0
+    return round(len(matched) / len(required), 2) if required else 0.0
