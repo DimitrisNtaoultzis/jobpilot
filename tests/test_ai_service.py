@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from jobpilot.ai_service.extraction import SkillExtraction
+from jobpilot.ai_service.gap_analysis import GapReview, ReviewedGap
 from jobpilot.ai_service.llm import get_chat_model
 from jobpilot.ai_service.main import app, get_resource_finder
 from jobpilot.ai_service.schemas import (
@@ -43,7 +44,10 @@ def api_client():
 
 @pytest.fixture
 def fake_model():
-    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]))
+    model = FakeModel(
+        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]),
+        GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="nice_to_have")]),
+    )
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model
     yield model
@@ -88,7 +92,7 @@ def test_analyze_compares_the_extracted_skills(api_client, fake_model):
         "matched_skills": ["Python"],
         "missing_skills": ["Docker"],
         "match_score": 0.5,
-        "skill_gaps": [],  # the graph has no gap review node yet
+        "skill_gaps": [{"skill": "Docker", "priority": "nice_to_have"}],  # from the review
         "learning_resources": [],  # the default fake finder finds nothing
     }
 
@@ -142,6 +146,16 @@ def test_analyze_returns_502_when_the_model_fails(api_client, fake_model):
 
     assert response.status_code == 502
     assert "Groq is down" not in response.text  # internal details stay in the logs
+
+
+def test_analyze_still_succeeds_when_the_gap_review_fails(api_client, fake_model):
+    fake_model.errors[GapReview] = RuntimeError("Groq is down")
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    # Graceful degradation: plain matching is kept, every gap is a cautious must_have
+    assert response.status_code == 200
+    assert response.json()["skill_gaps"] == [{"skill": "Docker", "priority": "must_have"}]
 
 
 def test_analyze_rejects_a_missing_field(api_client):

@@ -12,6 +12,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
 from .extraction import extract_skills
+from .gap_analysis import GapReview, apply_gap_review, review_gaps
 from .matching import compare_skills
 from .schemas import AnalyzeResponse, SkillResources
 
@@ -33,7 +34,8 @@ class AnalysisState(TypedDict):
     # Outputs: missing at the start, filled in by the nodes
     job_skills: NotRequired[list[str]]  # extract node
     cv_skills: NotRequired[list[str]]  # extract node
-    result: NotRequired[AnalyzeResponse]  # compare node, resources added later
+    # compare node; gap_analysis and find_resources replace it with updated copies
+    result: NotRequired[AnalyzeResponse]
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,25 @@ def compare(state: AnalysisState) -> dict[str, Any]:
     return {"result": compare_skills(state["job_skills"], state["cv_skills"])}
 
 
+async def gap_analysis(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
+    """Node: the LLM reviews the missing skills (covered by the CV? how important?)."""
+    result = state["result"]
+    try:
+        review = await review_gaps(
+            runtime.context.model,
+            result.missing_skills,
+            state["cv_skills"],
+            state["job_title"],
+            state["job_description"],
+        )
+    except Exception:
+        # Graceful degradation: with an empty review the guardrails keep every missing
+        # skill as a must_have gap, so skill_gaps stays complete and consistent.
+        logger.exception("Gap review failed")
+        review = GapReview(covered=[], gaps=[])
+    return {"result": apply_gap_review(result, state["cv_skills"], review)}
+
+
 async def find_resources(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
     """Node: a semantic search suggests learning resources for the missing skills."""
     result = state["result"]
@@ -79,22 +100,29 @@ async def find_resources(state: AnalysisState, runtime: Runtime[AnalysisContext]
 
 
 def route_after_compare(state: AnalysisState) -> str:
-    """Conditional edge: search for resources only when some skills are missing."""
+    """Conditional edge: review the gaps only when some skills are missing."""
+    return "gap_analysis" if state["result"].missing_skills else END
+
+
+def route_after_gap_analysis(state: AnalysisState) -> str:
+    """Conditional edge: search for resources only when real gaps are left."""
     return "find_resources" if state["result"].missing_skills else END
 
 
 def build_graph() -> CompiledStateGraph:
-    """Wire the nodes together: extract -> compare -> (find_resources) -> end."""
+    """Wire the nodes: extract -> compare -> (gap_analysis) -> (find_resources) -> end."""
     builder = StateGraph(AnalysisState, context_schema=AnalysisContext)
 
     builder.add_node(extract)  # the node name is the function name
     builder.add_node(compare)
+    builder.add_node(gap_analysis)
     builder.add_node(find_resources)
 
     builder.add_edge(START, "extract")
     builder.add_edge("extract", "compare")
     # path_map lists the possible targets, so LangGraph can validate and draw the graph
-    builder.add_conditional_edges("compare", route_after_compare, ["find_resources", END])
+    builder.add_conditional_edges("compare", route_after_compare, ["gap_analysis", END])
+    builder.add_conditional_edges("gap_analysis", route_after_gap_analysis, ["find_resources", END])
     builder.add_edge("find_resources", END)
 
     # compile() checks the structure (e.g. no node without a way in) and returns a runnable

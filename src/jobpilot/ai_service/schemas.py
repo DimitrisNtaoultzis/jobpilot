@@ -57,7 +57,7 @@ class AnalyzeResponse(BaseModel):
     matched_skills: list[str]
     missing_skills: list[str]
     match_score: float = Field(ge=0, le=1)
-    # One entry per missing skill, in the same order. Empty until the gap review runs.
+    # One entry per missing skill, in the same order (empty when nothing is missing).
     skill_gaps: list[SkillGap] = Field(default_factory=list)
     # One entry per missing skill. Empty when nothing is missing, or when the search
     # failed: the skill analysis is still useful without it (graceful degradation).
