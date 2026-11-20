@@ -5,14 +5,16 @@ from fakes import FakeModel, FakeResourceFinder
 from langgraph.runtime import Runtime
 
 from jobpilot.ai_service.extraction import SkillExtraction
+from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGap
 from jobpilot.ai_service.graph import (
     AnalysisContext,
     analysis_graph,
     compare,
     extract,
     find_resources,
+    gap_analysis,
 )
-from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillResources
+from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillGap, SkillResources
 
 STATE = {
     "cv_text": "Python developer",
@@ -31,9 +33,7 @@ def make_runtime(model=None, finder=None):
 
 
 def test_extract_returns_only_the_skill_keys():
-    model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["Python"])
-    )
+    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["Python"]))
 
     # Nodes are plain async functions: call one directly, no graph needed.
     update = asyncio.run(extract(STATE, make_runtime(model=model)))
@@ -42,11 +42,11 @@ def test_extract_returns_only_the_skill_keys():
 
 
 def test_extract_sends_the_state_texts_to_the_model():
-    model = FakeModel(extraction=SkillExtraction(job_skills=[], cv_skills=[]))
+    model = FakeModel(SkillExtraction(job_skills=[], cv_skills=[]))
 
     asyncio.run(extract(STATE, make_runtime(model=model)))
 
-    user_message = model.messages[-1].content
+    user_message = model.call_for(SkillExtraction).messages[-1].content
     assert "Python developer" in user_message
     assert "Backend Engineer" in user_message
     assert "We need Python and Docker" in user_message
@@ -108,6 +108,49 @@ def test_find_resources_returns_no_update_when_the_search_fails(caplog):
     assert "Learning resource search failed" in caplog.text
 
 
+DOCKER_IS_A_GAP = GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="must_have")])
+
+
+def gap_state():
+    """The state after compare: the job asks for SQL and Docker, the CV has PostgreSQL."""
+    result = AnalyzeResponse(
+        required_skills=["Python", "SQL", "Docker"],
+        matched_skills=["Python"],
+        missing_skills=["SQL", "Docker"],
+        match_score=0.33,
+    )
+    return {**STATE, "cv_skills": ["Python", "PostgreSQL"], "result": result}
+
+
+def test_gap_analysis_applies_the_review():
+    model = FakeModel(
+        GapReview(
+            covered=[CoveredSkill(skill="SQL", cv_skill="PostgreSQL")],
+            gaps=[ReviewedGap(skill="Docker", priority="nice_to_have")],
+        )
+    )
+
+    update = asyncio.run(gap_analysis(gap_state(), make_runtime(model=model)))
+
+    result = update["result"]
+    assert result.matched_skills == ["Python", "SQL"]
+    assert result.skill_gaps == [SkillGap(skill="Docker", priority="nice_to_have")]
+
+
+def test_gap_analysis_keeps_every_gap_as_must_have_when_the_llm_fails(caplog):
+    model = FakeModel(errors={GapReview: RuntimeError("Groq is down")})
+
+    update = asyncio.run(gap_analysis(gap_state(), make_runtime(model=model)))
+
+    result = update["result"]
+    assert result.missing_skills == ["SQL", "Docker"]  # plain matching is kept
+    assert result.skill_gaps == [
+        SkillGap(skill="SQL", priority="must_have"),
+        SkillGap(skill="Docker", priority="must_have"),
+    ]
+    assert "Gap review failed" in caplog.text
+
+
 def run_graph(model, finder=None):
     """Run the whole compiled graph, the way /analyze will."""
     context = AnalysisContext(model=model, find_resources=finder or FakeResourceFinder())
@@ -116,7 +159,7 @@ def run_graph(model, finder=None):
 
 def test_graph_runs_all_nodes_when_skills_are_missing():
     model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]), DOCKER_IS_A_GAP
     )
     finder = FakeResourceFinder(results=[DOCKER_RESOURCES])
 
@@ -129,7 +172,7 @@ def test_graph_runs_all_nodes_when_skills_are_missing():
 
 
 def test_graph_skips_the_search_when_nothing_is_missing():
-    model = FakeModel(extraction=SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
+    model = FakeModel(SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
     finder = FakeResourceFinder()
 
     final_state = run_graph(model, finder)
@@ -140,7 +183,7 @@ def test_graph_skips_the_search_when_nothing_is_missing():
 
 def test_graph_keeps_the_result_when_the_search_fails():
     model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]), DOCKER_IS_A_GAP
     )
     finder = FakeResourceFinder(error=RuntimeError("database is down"))
 
@@ -152,7 +195,36 @@ def test_graph_keeps_the_result_when_the_search_fails():
 
 def test_graph_lets_extraction_errors_propagate():
     # The graph does not hide LLM failures: /analyze turns them into a 502
-    model = FakeModel(error=RuntimeError("Groq is down"))
+    model = FakeModel(errors={SkillExtraction: RuntimeError("Groq is down")})
 
     with pytest.raises(RuntimeError, match="Groq is down"):
         run_graph(model)
+
+
+def test_graph_searches_only_the_gaps_left_after_the_review():
+    model = FakeModel(
+        SkillExtraction(job_skills=["SQL", "Docker"], cv_skills=["PostgreSQL"]),
+        GapReview(
+            covered=[CoveredSkill(skill="SQL", cv_skill="PostgreSQL")],
+            gaps=[ReviewedGap(skill="Docker", priority="must_have")],
+        ),
+    )
+    finder = FakeResourceFinder()
+
+    final_state = run_graph(model, finder)
+
+    assert final_state["result"].matched_skills == ["SQL"]
+    assert finder.skills == ["Docker"]  # no search for the covered SQL
+
+
+def test_graph_skips_the_search_when_the_review_covers_every_gap():
+    model = FakeModel(
+        SkillExtraction(job_skills=["SQL"], cv_skills=["PostgreSQL"]),
+        GapReview(covered=[CoveredSkill(skill="SQL", cv_skill="PostgreSQL")], gaps=[]),
+    )
+    finder = FakeResourceFinder()
+
+    final_state = run_graph(model, finder)
+
+    assert final_state["result"].match_score == 1.0
+    assert finder.skills is None  # the second conditional edge went straight to END

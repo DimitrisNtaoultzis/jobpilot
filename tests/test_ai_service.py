@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from jobpilot.ai_service.extraction import SkillExtraction
+from jobpilot.ai_service.gap_analysis import GapReview, ReviewedGap
 from jobpilot.ai_service.llm import get_chat_model
 from jobpilot.ai_service.main import app, get_resource_finder
 from jobpilot.ai_service.schemas import (
@@ -44,7 +45,8 @@ def api_client():
 @pytest.fixture
 def fake_model():
     model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]),
+        GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="nice_to_have")]),
     )
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model
@@ -77,6 +79,7 @@ def test_analyze_returns_the_response_shape(api_client, fake_model):
         "matched_skills",
         "missing_skills",
         "match_score",
+        "skill_gaps",
         "learning_resources",
     }
 
@@ -89,6 +92,7 @@ def test_analyze_compares_the_extracted_skills(api_client, fake_model):
         "matched_skills": ["Python"],
         "missing_skills": ["Docker"],
         "match_score": 0.5,
+        "skill_gaps": [{"skill": "Docker", "priority": "nice_to_have"}],  # from the review
         "learning_resources": [],  # the default fake finder finds nothing
     }
 
@@ -103,7 +107,9 @@ def test_analyze_searches_resources_for_the_missing_skills(api_client, fake_mode
 
 
 def test_analyze_skips_the_search_when_nothing_is_missing(api_client, fake_model, fake_finder):
-    fake_model.extraction = SkillExtraction(job_skills=["Python"], cv_skills=["Python"])
+    fake_model.responses[SkillExtraction] = SkillExtraction(
+        job_skills=["Python"], cv_skills=["Python"]
+    )
 
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
@@ -126,19 +132,30 @@ def test_analyze_still_succeeds_when_the_search_fails(api_client, fake_model, fa
 def test_analyze_uses_strict_structured_output_and_sends_the_texts(api_client, fake_model):
     api_client.post("/analyze", json=VALID_PAYLOAD)
 
-    assert fake_model.structured_output_kwargs == {"method": "json_schema", "strict": True}
-    user_message = fake_model.messages[-1].content
+    call = fake_model.call_for(SkillExtraction)
+    assert call.kwargs == {"method": "json_schema", "strict": True}
+    user_message = call.messages[-1].content
     assert "Python developer" in user_message  # the CV text
     assert "We need Python" in user_message  # the job description
 
 
 def test_analyze_returns_502_when_the_model_fails(api_client, fake_model):
-    fake_model.error = RuntimeError("Groq is down")
+    fake_model.errors[SkillExtraction] = RuntimeError("Groq is down")
 
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
     assert response.status_code == 502
     assert "Groq is down" not in response.text  # internal details stay in the logs
+
+
+def test_analyze_still_succeeds_when_the_gap_review_fails(api_client, fake_model):
+    fake_model.errors[GapReview] = RuntimeError("Groq is down")
+
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+
+    # Graceful degradation: plain matching is kept, every gap is a cautious must_have
+    assert response.status_code == 200
+    assert response.json()["skill_gaps"] == [{"skill": "Docker", "priority": "must_have"}]
 
 
 def test_analyze_rejects_a_missing_field(api_client):
