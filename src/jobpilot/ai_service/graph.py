@@ -197,8 +197,6 @@ async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) 
     Not wired into the graph yet: in step 2.7 it runs after the user approves the analysis.
     """
     result = state["result"]
-    # Only gaps the job requires call for the "ready to learn" sentence
-    has_required_gaps = any(gap.priority == "must_have" for gap in result.skill_gaps)
     try:
         text = await write_cover_letter(
             runtime.context.model,
@@ -206,9 +204,8 @@ async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) 
             state["job_title"],
             state["job_description"],
             result.matched_skills,
-            has_required_gaps,
         )
-        letter = check_cover_letter(text)
+        letter = check_cover_letter(text, result.missing_skills)
     except Exception:
         # The analysis is still useful without a letter. Never log the letter itself:
         # it is built from the CV (personal data).

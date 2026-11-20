@@ -5,7 +5,6 @@ from fakes import TEXT, TOOLS, FakeModel, FakeResourceFinder, search_call, submi
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
-from jobpilot.ai_service.cover_letter import HAS_REQUIRED_GAPS, NO_REQUIRED_GAPS
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGap
 from jobpilot.ai_service.graph import (
@@ -419,17 +418,9 @@ def test_write_letter_returns_the_checked_letter():
 
     assert update == {"cover_letter": "Dear hiring team,\n\nI build Python services."}
     user_message = model.call_for(TEXT).messages[-1].content
-    assert "Matched skills: Python" in user_message
-    assert HAS_REQUIRED_GAPS in user_message
-    assert "Docker" not in user_message.split("<analysis>")[1]  # gap names are never sent
-
-
-def test_write_letter_skips_the_gap_sentence_when_only_nice_to_have_skills_are_missing():
-    model = FakeModel(text="Dear hiring team,")
-
-    asyncio.run(write_letter(letter_state("nice_to_have"), make_runtime(model=model)))
-
-    assert NO_REQUIRED_GAPS in model.call_for(TEXT).messages[-1].content
+    analysis = user_message.split("<analysis>")[1]
+    assert "Matched skills: Python" in analysis
+    assert "Docker" not in analysis  # the gaps are never sent
 
 
 def test_write_letter_gives_none_when_the_letter_fails_its_checks(caplog):
@@ -448,3 +439,12 @@ def test_write_letter_gives_none_when_the_llm_fails():
     update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
 
     assert update == {"cover_letter": None}
+
+
+def test_write_letter_gives_none_when_the_letter_names_a_missing_skill(caplog):
+    model = FakeModel(text="Dear hiring team,\n\nI have not used Docker yet.")
+
+    update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
+
+    assert update == {"cover_letter": None}
+    assert "names missing skills: Docker" in caplog.text
