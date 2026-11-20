@@ -76,7 +76,7 @@ class ResourceFinder:
         self.pool = pool
         self.model = model
 
-    def __call__(self, skills: list[str]) -> list[SkillResources]:
+    def __call__(self, skills: list[str], limit: int = 3) -> list[SkillResources]:
         # Borrow a connection; it goes back to the pool at the end of the block
         with self.pool.connection(timeout=POOL_TIMEOUT) as conn:
-            return find_learning_resources(conn, self.model, skills)
+            return find_learning_resources(conn, self.model, skills, limit=limit)

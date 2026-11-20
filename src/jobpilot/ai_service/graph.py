@@ -3,9 +3,8 @@
 import asyncio
 import logging
 import operator
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any, NotRequired, Protocol, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AnyMessage
@@ -50,6 +49,16 @@ class AnalysisState(TypedDict):
     agent_turns: NotRequired[int]
 
 
+class FindResources(Protocol):
+    """Anything callable like ResourceFinder: the real one, or a fake in tests.
+
+    A Protocol is structural typing ("duck typing" a type checker understands): no
+    inheritance needed, matching the call signature is enough.
+    """
+
+    def __call__(self, skills: list[str], limit: int = 3) -> list[SkillResources]: ...
+
+
 @dataclass(frozen=True)
 class AnalysisContext:
     """Dependencies for one run, passed with graph.ainvoke(state, context=...).
@@ -58,8 +67,7 @@ class AnalysisContext:
     """
 
     model: BaseChatModel
-    # Any callable "skills -> resources": the real ResourceFinder, or a fake in tests
-    find_resources: Callable[[list[str]], list[SkillResources]]
+    find_resources: FindResources
 
 
 async def extract(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
