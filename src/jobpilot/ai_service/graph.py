@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+import operator
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langgraph.graph import END, START, StateGraph
+from langchain_core.messages import AnyMessage
+from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
@@ -36,6 +38,16 @@ class AnalysisState(TypedDict):
     cv_skills: NotRequired[list[str]]  # extract node
     # compare node; gap_analysis and find_resources replace it with updated copies
     result: NotRequired[AnalyzeResponse]
+
+    # Resource agent. These keys have a reducer (the 2nd argument of Annotated): what a
+    # node returns for them is ADDED to the current value instead of replacing it.
+    # The conversation with the LLM; add_messages appends (and updates by message id).
+    messages: NotRequired[Annotated[list[AnyMessage], add_messages]]
+    # Every search result of this run (prefetch + agent searches); operator.add concatenates
+    # lists. Python only accepts resources that appear here (the LLM cannot invent URLs).
+    found_resources: NotRequired[Annotated[list[SkillResources], operator.add]]
+    # How many times the LLM has answered, to stop the loop (MAX_AGENT_TURNS)
+    agent_turns: NotRequired[int]
 
 
 @dataclass(frozen=True)
