@@ -1,5 +1,5 @@
 import pytest
-from fakes import FakeModel, FakeResourceFinder
+from fakes import FakeModel, FakeResourceFinder, submit_call
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -47,6 +47,8 @@ def fake_model():
     model = FakeModel(
         SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]),
         GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="nice_to_have")]),
+        # The resource agent submits at once (it runs only when the finder finds something)
+        turns=[submit_call(Docker=["https://docs.docker.com/get-started/"])],
     )
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model

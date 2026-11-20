@@ -159,3 +159,11 @@ def test_resource_finder_searches_with_a_pooled_connection(resources_table, axis
     assert entry.resources[0].title == "A"
     # A bounded wait: if the database is down, fail fast instead of hanging the request
     assert pool.timeout is not None
+
+
+def test_resource_finder_passes_the_limit_on(resources_table, axis_model):
+    finder = ResourceFinder(FakePool(resources_table), axis_model)
+
+    [entry] = finder(["Kubernetes"], limit=1)
+
+    assert len(entry.resources) == 1

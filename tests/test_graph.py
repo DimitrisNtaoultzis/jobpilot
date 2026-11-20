@@ -1,7 +1,8 @@
 import asyncio
 
 import pytest
-from fakes import FakeModel, FakeResourceFinder
+from fakes import TOOLS, FakeModel, FakeResourceFinder, search_call, submit_call
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 from jobpilot.ai_service.extraction import SkillExtraction
@@ -9,11 +10,16 @@ from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGa
 from jobpilot.ai_service.graph import (
     AnalysisContext,
     analysis_graph,
+    apply_resource_plan,
     compare,
     extract,
-    find_resources,
     gap_analysis,
+    prefetch_resources,
+    resource_agent,
+    route_after_agent,
+    run_tools,
 )
+from jobpilot.ai_service.resource_agent import MAX_AGENT_TURNS, SEARCH_LIMIT
 from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillGap, SkillResources
 
 STATE = {
@@ -63,17 +69,25 @@ def test_compare_builds_the_result_from_the_skill_lists():
     assert result.match_score == 0.5
 
 
-DOCKER_RESOURCES = SkillResources(
-    skill="Docker",
-    resources=[
-        ResourceMatch(
-            title="Docker Get Started",
-            url="https://docs.docker.com/get-started/",
-            description="Official Docker tutorial.",
-            similarity=0.8,
-        )
-    ],
-)
+def resource(slug):
+    return ResourceMatch(
+        title=f"Title {slug}",
+        url=f"https://example.com/{slug}",
+        description=f"About {slug}.",
+        similarity=0.7,
+    )
+
+
+def url(slug):
+    return f"https://example.com/{slug}"
+
+
+# What the fake finder knows, by skill or query
+CATALOG = {
+    "Docker": [resource("docker"), resource("k8s"), resource("linux")],
+    "Docker containers tutorial": [resource("docker-book")],
+}
+DOCKER_RESOURCES = SkillResources(skill="Docker", resources=[resource("docker")])
 
 
 def make_result():
@@ -85,27 +99,135 @@ def make_result():
     )
 
 
-def test_find_resources_searches_the_missing_skills():
-    finder = FakeResourceFinder(results=[DOCKER_RESOURCES])
-    result = make_result()
+def agent_state(*messages, turns=0):
+    """The state inside the agent loop, after the prefetch of the Docker gap."""
+    found = [SkillResources(skill="Docker", resources=CATALOG["Docker"])]
+    return {
+        **STATE,
+        "result": make_result(),
+        "found_resources": found,
+        "messages": [HumanMessage("gaps and results"), *messages],
+        "agent_turns": turns,
+    }
 
-    update = asyncio.run(find_resources({**STATE, "result": result}, make_runtime(finder=finder)))
 
-    assert finder.skills == ["Docker"]
-    assert update["result"].learning_resources == [DOCKER_RESOURCES]
-    # The node returns a new result; the one in the state stays untouched
-    assert result.learning_resources == []
+def test_prefetch_searches_every_gap_and_starts_the_conversation():
+    finder = FakeResourceFinder(catalog=CATALOG)
+
+    update = asyncio.run(
+        prefetch_resources({**STATE, "result": make_result()}, make_runtime(finder=finder))
+    )
+
+    assert finder.calls == [(["Docker"], SEARCH_LIMIT)]
+    assert update["found_resources"][0].resources == CATALOG["Docker"]
+    system, user = update["messages"]
+    assert "https://example.com/k8s" in user.content
 
 
-def test_find_resources_returns_no_update_when_the_search_fails(caplog):
+def test_prefetch_returns_no_update_when_the_search_fails(caplog):
     finder = FakeResourceFinder(error=RuntimeError("database is down"))
 
     update = asyncio.run(
-        find_resources({**STATE, "result": make_result()}, make_runtime(finder=finder))
+        prefetch_resources({**STATE, "result": make_result()}, make_runtime(finder=finder))
     )
 
-    assert update == {}  # graceful degradation: the state keeps the result as it was
+    assert update == {}  # no found_resources: the graph skips the agent
     assert "Learning resource search failed" in caplog.text
+
+
+def test_resource_agent_requires_a_tool_call_and_counts_the_turn():
+    answer = search_call("Docker containers tutorial")
+    model = FakeModel(turns=[answer])
+
+    update = asyncio.run(resource_agent(agent_state(), make_runtime(model=model)))
+
+    assert update == {"messages": [answer], "agent_turns": 1}
+    call = model.call_for(TOOLS)
+    assert call.kwargs == {"tool_choice": "required"}
+    assert [tool.__name__ for tool in call.tools] == [
+        "SearchLearningResources",
+        "SubmitLearningPlan",
+    ]
+
+
+def test_resource_agent_must_submit_on_its_last_turn():
+    model = FakeModel(turns=[submit_call(Docker=[url("docker")])])
+
+    asyncio.run(resource_agent(agent_state(turns=MAX_AGENT_TURNS - 1), make_runtime(model=model)))
+
+    assert model.call_for(TOOLS).kwargs == {"tool_choice": "SubmitLearningPlan"}
+
+
+def test_resource_agent_adds_no_message_when_the_llm_fails(caplog):
+    model = FakeModel(turns=[RuntimeError("Groq is down")])
+
+    update = asyncio.run(resource_agent(agent_state(), make_runtime(model=model)))
+
+    assert update == {"agent_turns": 1}
+    assert "Resource agent failed" in caplog.text
+
+
+def test_run_tools_answers_each_search_with_its_results():
+    request = search_call("Docker containers tutorial")
+    finder = FakeResourceFinder(catalog=CATALOG)
+
+    update = asyncio.run(run_tools(agent_state(request), make_runtime(finder=finder)))
+
+    [message] = update["messages"]
+    assert isinstance(message, ToolMessage)
+    assert message.tool_call_id == request.tool_calls[0]["id"]  # answers this exact call
+    assert "https://example.com/docker-book" in message.content
+    assert update["found_resources"][0].skill == "Docker containers tutorial"
+    assert finder.calls == [(["Docker containers tutorial"], SEARCH_LIMIT)]
+
+
+def test_run_tools_still_answers_when_the_search_fails():
+    finder = FakeResourceFinder(error=RuntimeError("database is down"))
+
+    update = asyncio.run(run_tools(agent_state(search_call("x")), make_runtime(finder=finder)))
+
+    [message] = update["messages"]
+    assert message.content.startswith("Search failed")
+    assert update["found_resources"] == []
+
+
+def test_run_tools_answers_a_malformed_call_with_an_error():
+    bad_call = AIMessage(
+        content="", tool_calls=[{"name": "SearchLearningResources", "args": {}, "id": "c1"}]
+    )
+
+    update = asyncio.run(run_tools(agent_state(bad_call), make_runtime()))
+
+    [message] = update["messages"]
+    assert message.tool_call_id == "c1"
+    assert message.content.startswith("Error")
+
+
+def test_route_after_agent():
+    search = search_call("Docker containers tutorial")
+    submit = submit_call(Docker=[url("docker")])
+
+    assert route_after_agent(agent_state(search, turns=1)) == "run_tools"
+    assert route_after_agent(agent_state(submit, turns=1)) == "apply_resource_plan"
+    # Out of turns, or the LLM failed (no AI message last): finish with what we have
+    assert route_after_agent(agent_state(search, turns=MAX_AGENT_TURNS)) == "apply_resource_plan"
+    assert route_after_agent(agent_state(turns=1)) == "apply_resource_plan"
+
+
+def test_apply_resource_plan_puts_the_checked_choice_in_the_result():
+    state = agent_state(submit_call(Docker=[url("linux"), url("made-up")]), turns=1)
+
+    update = apply_resource_plan(state)
+
+    [entry] = update["result"].learning_resources
+    assert entry.resources == [resource("linux")]  # the invented URL is dropped
+
+
+def test_apply_resource_plan_falls_back_without_a_plan():
+    update = apply_resource_plan(agent_state(turns=1))  # the agent failed
+
+    [entry] = update["result"].learning_resources
+    assert entry.resources == [resource("docker")]  # the top prefetch result
 
 
 DOCKER_IS_A_GAP = GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="must_have")])
@@ -157,18 +279,25 @@ def run_graph(model, finder=None):
     return asyncio.run(analysis_graph.ainvoke(STATE, context=context))
 
 
-def test_graph_runs_all_nodes_when_skills_are_missing():
-    model = FakeModel(
-        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]), DOCKER_IS_A_GAP
+def docker_gap_model(*turns):
+    """A model for a run where Docker is the only gap; `turns` are the agent's answers."""
+    return FakeModel(
+        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]),
+        DOCKER_IS_A_GAP,
+        turns=turns,
     )
-    finder = FakeResourceFinder(results=[DOCKER_RESOURCES])
+
+
+def test_graph_runs_all_nodes_when_skills_are_missing():
+    model = docker_gap_model(submit_call(Docker=[url("docker")]))
+    finder = FakeResourceFinder(catalog=CATALOG)
 
     final_state = run_graph(model, finder)
 
     result = final_state["result"]
     assert result.missing_skills == ["Docker"]
     assert result.learning_resources == [DOCKER_RESOURCES]
-    assert finder.skills == ["Docker"]
+    assert finder.calls == [(["Docker"], SEARCH_LIMIT)]  # only the prefetch
 
 
 def test_graph_skips_the_search_when_nothing_is_missing():
@@ -182,9 +311,7 @@ def test_graph_skips_the_search_when_nothing_is_missing():
 
 
 def test_graph_keeps_the_result_when_the_search_fails():
-    model = FakeModel(
-        SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]), DOCKER_IS_A_GAP
-    )
+    model = docker_gap_model()  # no agent turns: the agent must be skipped
     finder = FakeResourceFinder(error=RuntimeError("database is down"))
 
     final_state = run_graph(model, finder)
@@ -228,3 +355,48 @@ def test_graph_skips_the_search_when_the_review_covers_every_gap():
 
     assert final_state["result"].match_score == 1.0
     assert finder.skills is None  # the second conditional edge went straight to END
+
+
+def test_graph_lets_the_agent_search_again_before_it_submits():
+    model = docker_gap_model(
+        search_call("Docker containers tutorial"),
+        submit_call(Docker=[url("docker-book"), url("docker")]),
+    )
+    finder = FakeResourceFinder(catalog=CATALOG)
+
+    final_state = run_graph(model, finder)
+
+    assert finder.calls[1] == (["Docker containers tutorial"], SEARCH_LIMIT)
+    [entry] = final_state["result"].learning_resources
+    # A URL from the agent's own search is accepted
+    assert entry.resources == [resource("docker-book"), resource("docker")]
+    # The 2nd LLM call saw its search answered: AI tool call, then the ToolMessage
+    second_call = model.tool_calls_made()[1]
+    assert isinstance(second_call.messages[-1], ToolMessage)
+
+
+def test_graph_forces_a_submit_when_the_agent_runs_out_of_turns():
+    model = docker_gap_model(
+        search_call("Docker containers tutorial"),
+        search_call("Docker for beginners"),
+        submit_call(Docker=[url("docker")]),
+    )
+
+    final_state = run_graph(model, FakeResourceFinder(catalog=CATALOG))
+
+    calls = model.tool_calls_made()
+    assert len(calls) == MAX_AGENT_TURNS
+    assert [call.kwargs["tool_choice"] for call in calls] == [
+        "required",
+        "required",
+        "SubmitLearningPlan",
+    ]
+    assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
+
+
+def test_graph_falls_back_to_the_top_result_when_the_agent_fails():
+    model = docker_gap_model(RuntimeError("Groq is down"))
+
+    final_state = run_graph(model, FakeResourceFinder(catalog=CATALOG))
+
+    assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
