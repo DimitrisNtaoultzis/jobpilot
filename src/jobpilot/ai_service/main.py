@@ -17,9 +17,8 @@ from psycopg_pool import ConnectionPool
 
 from .config import get_settings
 from .embeddings import get_embedding_model
-from .extraction import extract_skills
+from .graph import AnalysisContext, analysis_graph
 from .llm import get_chat_model
-from .matching import compare_skills
 from .retrieval import ResourceFinder
 from .schemas import AnalyzeRequest, AnalyzeResponse
 
@@ -73,29 +72,21 @@ async def analyze(
     finder: Annotated[ResourceFinder, Depends(get_resource_finder)],
 ) -> AnalyzeResponse:
     """Compare a CV with a job posting: the LLM extracts the skills, plain code compares them,
-    and a semantic search suggests learning resources for the missing ones."""
+    and a semantic search suggests learning resources for the missing ones.
+
+    The workflow itself lives in the analysis graph (graph.py); this endpoint only maps
+    HTTP to a graph run and back.
+    """
+    context = AnalysisContext(model=model, find_resources=finder)
     try:
-        extraction = await extract_skills(
-            model, payload.cv_text, payload.job_title, payload.job_description
-        )
+        final_state = await analysis_graph.ainvoke(payload.model_dump(), context=context)
     except Exception as exc:
         # Service boundary: log the full traceback, return a safe message to the client.
         # Log the error, never the texts: CVs contain personal data.
-        logger.exception("Skill extraction failed")
+        # (A failed resource search never gets here: the graph degrades gracefully.)
+        logger.exception("Analysis graph failed")
         raise HTTPException(
             status_code=502, detail="The AI model could not analyze this request."
         ) from exc
 
-    result = compare_skills(extraction.job_skills, extraction.cv_skills)
-
-    if result.missing_skills:
-        try:
-            # Blocking work (embedding, sync query) in a worker thread: the event loop
-            # keeps serving other requests meanwhile.
-            result.learning_resources = await asyncio.to_thread(finder, result.missing_skills)
-        except Exception:
-            # Graceful degradation: the skill analysis is useful on its own, so return it
-            # without resources (learning_resources stays []) instead of failing.
-            logger.exception("Learning resource search failed")
-
-    return result
+    return final_state["result"]
