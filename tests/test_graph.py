@@ -20,7 +20,11 @@ from jobpilot.ai_service.graph import (
     run_tools,
     write_letter,
 )
-from jobpilot.ai_service.resource_agent import MAX_AGENT_TURNS, SEARCH_LIMIT
+from jobpilot.ai_service.resource_agent import (
+    LAST_TURN_REMINDER,
+    MAX_AGENT_TURNS,
+    SEARCH_LIMIT,
+)
 from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillGap, SkillResources
 
 STATE = {
@@ -156,7 +160,11 @@ def test_resource_agent_must_submit_on_its_last_turn():
 
     asyncio.run(resource_agent(agent_state(turns=MAX_AGENT_TURNS - 1), make_runtime(model=model)))
 
-    assert model.call_for(TOOLS).kwargs == {"tool_choice": "SubmitLearningPlan"}
+    call = model.call_for(TOOLS)
+    # Only the submit tool is offered: the model cannot search any more
+    assert [tool.__name__ for tool in call.tools] == ["SubmitLearningPlan"]
+    assert call.kwargs == {"tool_choice": "required"}
+    assert call.messages[-1].content == LAST_TURN_REMINDER
 
 
 def test_resource_agent_adds_no_message_when_the_llm_fails(caplog):
@@ -387,11 +395,7 @@ def test_graph_forces_a_submit_when_the_agent_runs_out_of_turns():
 
     calls = model.tool_calls_made()
     assert len(calls) == MAX_AGENT_TURNS
-    assert [call.kwargs["tool_choice"] for call in calls] == [
-        "required",
-        "required",
-        "SubmitLearningPlan",
-    ]
+    assert [len(call.tools) for call in calls] == [2, 2, 1]  # the last turn: submit only
     assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
 
 
@@ -424,6 +428,7 @@ def test_write_letter_returns_the_checked_letter():
 
 
 def test_write_letter_gives_none_when_the_letter_fails_its_checks(caplog):
+    # A single text is the answer to every call: the rewrite fails the same way
     model = FakeModel(text="Dear [Hiring Manager],\n\nI build Python services.")
 
     update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
@@ -441,10 +446,18 @@ def test_write_letter_gives_none_when_the_llm_fails():
     assert update == {"cover_letter": None}
 
 
-def test_write_letter_gives_none_when_the_letter_names_a_missing_skill(caplog):
-    model = FakeModel(text="Dear hiring team,\n\nI have not used Docker yet.")
+def test_write_letter_keeps_a_rewrite_that_passes_the_checks():
+    model = FakeModel(text=["I have not used Docker yet.", "I build Python services."])
+
+    update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
+
+    assert update == {"cover_letter": "I build Python services."}
+
+
+def test_write_letter_gives_none_when_the_rewrite_also_names_a_missing_skill(caplog):
+    model = FakeModel(text=["I have not used Docker yet.", "Docker is new to me."])
 
     update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
 
     assert update == {"cover_letter": None}
-    assert "names missing skills: Docker" in caplog.text
+    assert "does not show: Docker" in caplog.text

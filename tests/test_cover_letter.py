@@ -1,9 +1,10 @@
 import asyncio
 
 import pytest
-from fakes import TEXT, FakeModel
+from fakes import FakeModel
 
 from jobpilot.ai_service.cover_letter import (
+    MAX_LETTER_ATTEMPTS,
     SYSTEM_PROMPT,
     CoverLetterError,
     build_messages,
@@ -32,14 +33,48 @@ def test_build_messages_says_none_when_no_skill_matched():
     assert "Matched skills: none" in user.content
 
 
+def write(model):
+    """write_cover_letter for this module's example: Python matched, Kubernetes missing."""
+    return asyncio.run(
+        write_cover_letter(model, CV_TEXT, JOB_TITLE, JOB_DESCRIPTION, ["Python"], ["Kubernetes"])
+    )
+
+
 def test_write_cover_letter_makes_a_plain_call_and_returns_the_trimmed_text():
     model = FakeModel(text="\n  Dear hiring team,\n\nI am applying...  \n")
 
-    letter = asyncio.run(write_cover_letter(model, CV_TEXT, JOB_TITLE, JOB_DESCRIPTION, ["Python"]))
+    letter = write(model)
 
     assert letter == "Dear hiring team,\n\nI am applying..."
-    call = model.call_for(TEXT)  # free text: no structured output, no tools
+    [call] = model.text_calls_made()  # one call: free text, no schema, no tools
     assert CV_TEXT in call.messages[-1].content
+
+
+def test_a_letter_that_fails_a_check_is_rewritten_with_the_exact_problem():
+    bad = "Dear hiring team,\n\nI deploy services with Kubernetes."
+    good = "Dear hiring team,\n\nI build Python services."
+    model = FakeModel(text=[bad, good])
+
+    letter = write(model)
+
+    assert letter == good
+    first, second = model.text_calls_made()
+    # The rewrite continues the conversation: the model's own letter, then the problem
+    assert second.messages[:-2] == first.messages
+    assert second.messages[-2].content == bad
+    feedback = second.messages[-1].content
+    assert "names skills that the CV does not show: Kubernetes" in feedback
+    assert "Rewrite the whole letter" in feedback
+
+
+def test_write_cover_letter_gives_up_after_the_rewrite_also_fails():
+    bad = "Dear hiring team,\n\nI know Kubernetes."
+    model = FakeModel(text=[bad, bad, "never asked for"])
+
+    with pytest.raises(CoverLetterError, match="Kubernetes"):
+        write(model)
+
+    assert len(model.text_calls_made()) == MAX_LETTER_ATTEMPTS
 
 
 MISSING = ["Docker", "Kubernetes"]
@@ -65,7 +100,7 @@ def test_check_cover_letter_rejects_a_placeholder(placeholder):
 def test_check_cover_letter_rejects_a_letter_that_names_missing_skills():
     letter = "My resume does not yet list Docker or kubernetes, but I learn fast."
 
-    with pytest.raises(CoverLetterError, match="names missing skills: Docker, Kubernetes"):
+    with pytest.raises(CoverLetterError, match="does not show: Docker, Kubernetes"):
         check_cover_letter(letter, MISSING)
 
 

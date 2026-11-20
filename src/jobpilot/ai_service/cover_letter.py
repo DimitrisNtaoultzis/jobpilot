@@ -1,9 +1,12 @@
 """Cover letter writing with the LLM: the prompt and the call (plain text, no schema)."""
 
+import logging
 import re
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You write a cover letter for a candidate applying to a job.
@@ -54,20 +57,45 @@ def build_messages(
     return [SystemMessage(SYSTEM_PROMPT), HumanMessage(user_message)]
 
 
+# One letter, plus one rewrite if it fails the checks
+MAX_LETTER_ATTEMPTS = 2
+
+
 async def write_cover_letter(
     model: BaseChatModel,
     cv_text: str,
     job_title: str,
     job_description: str,
     matched_skills: list[str],
+    missing_skills: list[str],
 ) -> str:
-    """Ask the model for a cover letter; returns its text without surrounding whitespace."""
-    # Plain ainvoke, no structured output: the answer is free text.
-    answer = await model.ainvoke(
-        build_messages(cv_text, job_title, job_description, matched_skills)
-    )
-    # .text joins the text parts of the message; a reasoning model's thinking is not in it
-    return answer.text.strip()
+    """Ask the model for a cover letter that passes check_cover_letter.
+
+    Self-correction: if a letter fails a check, the model gets its own letter back with
+    the exact problem and rewrites it, up to MAX_LETTER_ATTEMPTS letters in all.
+    Raises CoverLetterError if the last one still fails.
+    """
+    messages = build_messages(cv_text, job_title, job_description, matched_skills)
+    for attempt in range(1, MAX_LETTER_ATTEMPTS + 1):
+        # Plain ainvoke, no structured output: the answer is free text.
+        answer = await model.ainvoke(messages)
+        # .text joins the text parts of the message; a reasoning model's thinking is not in it
+        text = answer.text.strip()
+        try:
+            return check_cover_letter(text, missing_skills)
+        except CoverLetterError as error:
+            # How often letters fail is worth knowing; the message holds no CV data
+            logger.warning("Cover letter attempt %d failed a check: %s", attempt, error)
+            if attempt == MAX_LETTER_ATTEMPTS:
+                raise
+            # The conversation goes on: the model sees what it wrote and what is wrong
+            messages = [*messages, AIMessage(text), HumanMessage(revision_request(error))]
+    raise AssertionError("unreachable")  # the loop always returns or raises
+
+
+def revision_request(error: "CoverLetterError") -> str:
+    """The feedback for a rewrite: the exact problem, then the instruction."""
+    return f"{error}. Rewrite the whole letter to fix this, and keep every other rule."
 
 
 # A short text in square brackets, such as [Company Name] or [Your Name]
@@ -105,5 +133,9 @@ def check_cover_letter(text: str, missing_skills: list[str]) -> str:
     # The prompt asks the model never to name a missing skill; this enforces it
     named = [skill for skill in missing_skills if mentions_skill(text, skill)]
     if named:
-        raise CoverLetterError(f"The letter names missing skills: {', '.join(named)}")
+        # Worded for the model too: it is the feedback of a rewrite (revision_request)
+        raise CoverLetterError(
+            f"The letter names skills that the CV does not show: {', '.join(named)}. "
+            "Do not mention them in any way"
+        )
     return text

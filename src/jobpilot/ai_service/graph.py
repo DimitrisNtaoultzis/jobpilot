@@ -7,16 +7,17 @@ from dataclasses import dataclass
 from typing import Annotated, Any, NotRequired, Protocol, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
-from .cover_letter import check_cover_letter, write_cover_letter
+from .cover_letter import write_cover_letter
 from .extraction import extract_skills
 from .gap_analysis import GapReview, apply_gap_review, review_gaps
 from .matching import compare_skills
 from .resource_agent import (
+    LAST_TURN_REMINDER,
     MAX_AGENT_TURNS,
     SEARCH_LIMIT,
     TOOLS,
@@ -139,12 +140,19 @@ async def prefetch_resources(
 async def resource_agent(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
     """Node: one turn of the LLM, which answers with a tool call (search again or submit)."""
     turn = state.get("agent_turns", 0) + 1
-    # "required": the model must call a tool (no free text). On the last turn it must
-    # submit, so the turn limit never throws away the work done so far.
-    tool_choice = SubmitLearningPlan.__name__ if turn >= MAX_AGENT_TURNS else "required"
-    model = runtime.context.model.bind_tools(TOOLS, tool_choice=tool_choice)
+    messages = state["messages"]
+    tools = TOOLS
+    if turn >= MAX_AGENT_TURNS:
+        # The last turn must submit, so the turn limit never throws away the work done.
+        # Naming the tool in tool_choice is not enough: gpt-oss still tried to search,
+        # and Groq rejected the answer (400). A tool the model cannot see, it cannot call.
+        tools = [SubmitLearningPlan]
+        # Sent with this call only, not stored in the state
+        messages = [*messages, HumanMessage(LAST_TURN_REMINDER)]
+    # "required": the model must call a tool, never answer with free text
+    model = runtime.context.model.bind_tools(tools, tool_choice="required")
     try:
-        answer = await model.ainvoke(state["messages"])
+        answer = await model.ainvoke(messages)
     except Exception:
         # Graceful degradation: no new AI message, so apply_resource_plan finds no plan
         # and falls back to the top prefetch result for every gap.
@@ -198,14 +206,15 @@ async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) 
     """
     result = state["result"]
     try:
-        text = await write_cover_letter(
+        # Checked inside, with one rewrite if needed
+        letter = await write_cover_letter(
             runtime.context.model,
             state["cv_text"],
             state["job_title"],
             state["job_description"],
             result.matched_skills,
+            result.missing_skills,
         )
-        letter = check_cover_letter(text, result.missing_skills)
     except Exception:
         # The analysis is still useful without a letter. Never log the letter itself:
         # it is built from the CV (personal data).

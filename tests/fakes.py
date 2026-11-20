@@ -34,6 +34,7 @@ class FakeModel:
         FakeModel(extraction, errors={GapReview: RuntimeError()})  # the review fails
         FakeModel(turns=[search_call("..."), submit_call(...)])    # tool-calling turns
         FakeModel(text="Dear hiring team, ...")                    # plain call: free text
+        FakeModel(text=["first letter", "rewrite"])                # one text per plain call
 
     For tool calling, `turns` are the AIMessages returned one after the other; an
     exception in the list is raised when its turn comes.
@@ -46,17 +47,28 @@ class FakeModel:
         self.responses = {type(response): response for response in responses}
         self.errors = dict(errors or {})
         self.turns = list(turns)
-        self.text = text  # the answer to a plain call, or an exception to raise
+        # The answer to a plain call (or an exception to raise); a list gives one per call
+        self.text = list(text) if isinstance(text, list) else text
         self.calls: list[Call] = []
 
     async def ainvoke(self, messages):
         """A plain call, as for the cover letter: answers with an AIMessage of text."""
         self.calls.append(Call(TEXT, {}, list(messages)))
-        if isinstance(self.text, Exception):
-            raise self.text
-        if self.text is None:
+        if isinstance(self.text, list):
+            if not self.text:
+                raise LookupError("FakeModel has no more answers for plain calls")
+            answer = self.text.pop(0)
+        else:
+            answer = self.text
+        if isinstance(answer, Exception):
+            raise answer
+        if answer is None:
             raise LookupError("FakeModel has no answer for a plain call")
-        return AIMessage(content=self.text)
+        return AIMessage(content=answer)
+
+    def text_calls_made(self) -> list[Call]:
+        """Every plain call, in order."""
+        return [call for call in self.calls if call.schema is TEXT]
 
     def with_structured_output(self, schema, **kwargs):
         # Like a real model: returns a new runnable bound to this schema
