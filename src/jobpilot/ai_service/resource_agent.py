@@ -54,6 +54,9 @@ class SubmitLearningPlan(BaseModel):
 
 TOOLS = [SearchLearningResources, SubmitLearningPlan]
 
+# Sent with the last turn, when only SubmitLearningPlan is offered
+LAST_TURN_REMINDER = "This is your last turn: call SubmitLearningPlan now with your final choice."
+
 SYSTEM_PROMPT = f"""\
 You pick learning resources for a candidate's skill gaps.
 

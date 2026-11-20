@@ -13,13 +13,15 @@ from jobpilot.ai_service.schemas import SkillResources
 
 # Call.schema for a call made through bind_tools() instead of with_structured_output()
 TOOLS = "tools"
+# Call.schema for a plain call (model.ainvoke): free text, no schema, no tools
+TEXT = "text"
 
 
 @dataclass
 class Call:
     """One call made to a FakeModel."""
 
-    schema: type | str  # the output schema, or TOOLS for a tool-calling turn
+    schema: type | str  # the output schema, TOOLS (tool-calling turn) or TEXT (plain call)
     kwargs: dict  # e.g. method/strict, or tool_choice
     messages: list
     tools: list = field(default_factory=list)  # the tools bound for this call, if any
@@ -31,6 +33,8 @@ class FakeModel:
         FakeModel(SkillExtraction(...), GapReview(...))           # answers, picked by type
         FakeModel(extraction, errors={GapReview: RuntimeError()})  # the review fails
         FakeModel(turns=[search_call("..."), submit_call(...)])    # tool-calling turns
+        FakeModel(text="Dear hiring team, ...")                    # plain call: free text
+        FakeModel(text=["first letter", "rewrite"])                # one text per plain call
 
     For tool calling, `turns` are the AIMessages returned one after the other; an
     exception in the list is raised when its turn comes.
@@ -39,11 +43,32 @@ class FakeModel:
     not subclass BaseChatModel, it just has the methods our code calls.
     """
 
-    def __init__(self, *responses, errors=None, turns=()):
+    def __init__(self, *responses, errors=None, turns=(), text=None):
         self.responses = {type(response): response for response in responses}
         self.errors = dict(errors or {})
         self.turns = list(turns)
+        # The answer to a plain call (or an exception to raise); a list gives one per call
+        self.text = list(text) if isinstance(text, list) else text
         self.calls: list[Call] = []
+
+    async def ainvoke(self, messages):
+        """A plain call, as for the cover letter: answers with an AIMessage of text."""
+        self.calls.append(Call(TEXT, {}, list(messages)))
+        if isinstance(self.text, list):
+            if not self.text:
+                raise LookupError("FakeModel has no more answers for plain calls")
+            answer = self.text.pop(0)
+        else:
+            answer = self.text
+        if isinstance(answer, Exception):
+            raise answer
+        if answer is None:
+            raise LookupError("FakeModel has no answer for a plain call")
+        return AIMessage(content=answer)
+
+    def text_calls_made(self) -> list[Call]:
+        """Every plain call, in order."""
+        return [call for call in self.calls if call.schema is TEXT]
 
     def with_structured_output(self, schema, **kwargs):
         # Like a real model: returns a new runnable bound to this schema
