@@ -1,5 +1,7 @@
 """The analysis workflow as a LangGraph graph: state, nodes and edges."""
 
+import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
@@ -8,7 +10,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.runtime import Runtime
 
 from .extraction import extract_skills
+from .matching import compare_skills
 from .schemas import AnalyzeResponse, SkillResources
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisState(TypedDict):
@@ -48,3 +53,24 @@ async def extract(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> di
     )
     # Return only the keys this node changes; LangGraph merges them into the state.
     return {"job_skills": extraction.job_skills, "cv_skills": extraction.cv_skills}
+
+
+def compare(state: AnalysisState) -> dict[str, Any]:
+    """Node: plain code compares the two skill lists (no LLM, no dependencies)."""
+    return {"result": compare_skills(state["job_skills"], state["cv_skills"])}
+
+
+async def find_resources(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
+    """Node: a semantic search suggests learning resources for the missing skills."""
+    result = state["result"]
+    try:
+        # Blocking work (embedding, sync query) in a worker thread: the event loop
+        # keeps serving other requests meanwhile.
+        resources = await asyncio.to_thread(runtime.context.find_resources, result.missing_skills)
+    except Exception:
+        # Graceful degradation: the skill analysis is useful on its own, so keep it
+        # without resources instead of failing the whole run.
+        logger.exception("Learning resource search failed")
+        return {}  # nothing changes
+    # Never mutate the state in place: return a new value and let LangGraph store it.
+    return {"result": result.model_copy(update={"learning_resources": resources})}
