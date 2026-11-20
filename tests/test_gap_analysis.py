@@ -29,13 +29,14 @@ def test_build_messages_wraps_each_input_in_its_own_tags():
 
 def test_review_gaps_uses_strict_structured_output():
     review = GapReview(covered=[], gaps=[ReviewedGap(skill="Terraform", priority="nice_to_have")])
-    model = FakeModel(extraction=review)  # FakeModel returns whatever it is given
+    model = FakeModel(review)
 
     result = asyncio.run(review_gaps(model, ["Terraform"], ["Python"], JOB_TITLE, JOB_DESCRIPTION))
 
     assert result == review
-    assert model.structured_output_kwargs == {"method": "json_schema", "strict": True}
-    assert "<missing_skills>\nTerraform\n</missing_skills>" in model.messages[-1].content
+    call = model.call_for(GapReview)
+    assert call.kwargs == {"method": "json_schema", "strict": True}
+    assert "<missing_skills>\nTerraform\n</missing_skills>" in call.messages[-1].content
 
 
 # --- apply_gap_review: Python enforces what the prompt only asks for ---

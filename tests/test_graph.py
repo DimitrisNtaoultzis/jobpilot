@@ -31,9 +31,7 @@ def make_runtime(model=None, finder=None):
 
 
 def test_extract_returns_only_the_skill_keys():
-    model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["Python"])
-    )
+    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["Python"]))
 
     # Nodes are plain async functions: call one directly, no graph needed.
     update = asyncio.run(extract(STATE, make_runtime(model=model)))
@@ -42,11 +40,11 @@ def test_extract_returns_only_the_skill_keys():
 
 
 def test_extract_sends_the_state_texts_to_the_model():
-    model = FakeModel(extraction=SkillExtraction(job_skills=[], cv_skills=[]))
+    model = FakeModel(SkillExtraction(job_skills=[], cv_skills=[]))
 
     asyncio.run(extract(STATE, make_runtime(model=model)))
 
-    user_message = model.messages[-1].content
+    user_message = model.call_for(SkillExtraction).messages[-1].content
     assert "Python developer" in user_message
     assert "Backend Engineer" in user_message
     assert "We need Python and Docker" in user_message
@@ -115,9 +113,7 @@ def run_graph(model, finder=None):
 
 
 def test_graph_runs_all_nodes_when_skills_are_missing():
-    model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
-    )
+    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]))
     finder = FakeResourceFinder(results=[DOCKER_RESOURCES])
 
     final_state = run_graph(model, finder)
@@ -129,7 +125,7 @@ def test_graph_runs_all_nodes_when_skills_are_missing():
 
 
 def test_graph_skips_the_search_when_nothing_is_missing():
-    model = FakeModel(extraction=SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
+    model = FakeModel(SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
     finder = FakeResourceFinder()
 
     final_state = run_graph(model, finder)
@@ -139,9 +135,7 @@ def test_graph_skips_the_search_when_nothing_is_missing():
 
 
 def test_graph_keeps_the_result_when_the_search_fails():
-    model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
-    )
+    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]))
     finder = FakeResourceFinder(error=RuntimeError("database is down"))
 
     final_state = run_graph(model, finder)
@@ -152,7 +146,7 @@ def test_graph_keeps_the_result_when_the_search_fails():
 
 def test_graph_lets_extraction_errors_propagate():
     # The graph does not hide LLM failures: /analyze turns them into a 502
-    model = FakeModel(error=RuntimeError("Groq is down"))
+    model = FakeModel(errors={SkillExtraction: RuntimeError("Groq is down")})
 
     with pytest.raises(RuntimeError, match="Groq is down"):
         run_graph(model)

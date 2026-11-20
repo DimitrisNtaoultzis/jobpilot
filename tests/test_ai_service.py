@@ -43,9 +43,7 @@ def api_client():
 
 @pytest.fixture
 def fake_model():
-    model = FakeModel(
-        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
-    )
+    model = FakeModel(SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]))
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model
     yield model
@@ -105,7 +103,9 @@ def test_analyze_searches_resources_for_the_missing_skills(api_client, fake_mode
 
 
 def test_analyze_skips_the_search_when_nothing_is_missing(api_client, fake_model, fake_finder):
-    fake_model.extraction = SkillExtraction(job_skills=["Python"], cv_skills=["Python"])
+    fake_model.responses[SkillExtraction] = SkillExtraction(
+        job_skills=["Python"], cv_skills=["Python"]
+    )
 
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
@@ -128,14 +128,15 @@ def test_analyze_still_succeeds_when_the_search_fails(api_client, fake_model, fa
 def test_analyze_uses_strict_structured_output_and_sends_the_texts(api_client, fake_model):
     api_client.post("/analyze", json=VALID_PAYLOAD)
 
-    assert fake_model.structured_output_kwargs == {"method": "json_schema", "strict": True}
-    user_message = fake_model.messages[-1].content
+    call = fake_model.call_for(SkillExtraction)
+    assert call.kwargs == {"method": "json_schema", "strict": True}
+    user_message = call.messages[-1].content
     assert "Python developer" in user_message  # the CV text
     assert "We need Python" in user_message  # the job description
 
 
 def test_analyze_returns_502_when_the_model_fails(api_client, fake_model):
-    fake_model.error = RuntimeError("Groq is down")
+    fake_model.errors[SkillExtraction] = RuntimeError("Groq is down")
 
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
