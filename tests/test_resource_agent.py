@@ -1,9 +1,14 @@
+from fakes import search_call, submit_call, tool_call_message
 from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from jobpilot.ai_service.resource_agent import (
+    SYSTEM_PROMPT,
     TOOLS,
     SkillSelection,
     SubmitLearningPlan,
+    build_messages,
+    format_results,
+    parse_plan,
     select_resources,
 )
 from jobpilot.ai_service.schemas import ResourceMatch, SkillResources
@@ -148,3 +153,47 @@ def test_skills_are_compared_by_normalized_name_and_the_first_choice_wins():
     selected = select_resources(["Docker"], FOUND, llm_plan)
 
     assert slugs(selected) == {"Docker": ["k8s"]}
+
+
+# --- What the LLM sees, and reading its answer ---
+
+
+def test_format_results_shows_each_search_as_a_tagged_numbered_block():
+    text = format_results([FOUND[0]])
+
+    assert text.startswith("<search_results>\nQuery: Docker\n")
+    assert "1. Title docker\n   URL: https://example.com/docker\n   About docker." in text
+    assert "3. Title linux" in text
+    assert text.endswith("</search_results>")
+    assert "0.7" not in text  # no similarity score: the LLM judges by content
+
+
+def test_format_results_says_so_when_a_search_found_nothing():
+    text = format_results([SkillResources(skill="Rust", resources=[])])
+
+    assert "No results." in text
+
+
+def test_build_messages_lists_the_gaps_and_their_results():
+    system, user = build_messages(GAPS, FOUND[:2])
+
+    assert system.content == SYSTEM_PROMPT
+    assert "<skill_gaps>\nDocker\nGitHub Actions\n</skill_gaps>" in user.content
+    assert "Query: Docker" in user.content
+    assert "Query: GitHub Actions" in user.content
+
+
+def test_parse_plan_reads_the_submitted_plan():
+    message = submit_call(Docker=[url("docker")], GitHub_Actions=[])
+
+    assert parse_plan(message) == plan(Docker=["docker"], GitHub_Actions=[])
+
+
+def test_parse_plan_gives_none_without_a_submit_call():
+    assert parse_plan(search_call("Docker tutorial")) is None
+
+
+def test_parse_plan_gives_none_when_the_arguments_do_not_fit_the_schema():
+    message = tool_call_message("SubmitLearningPlan", {"selections": [{"skill": "Docker"}]})
+
+    assert parse_plan(message) is None  # "urls" is missing
