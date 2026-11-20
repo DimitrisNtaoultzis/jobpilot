@@ -1,10 +1,17 @@
 import asyncio
 
+import pytest
 from fakes import FakeModel, FakeResourceFinder
 from langgraph.runtime import Runtime
 
 from jobpilot.ai_service.extraction import SkillExtraction
-from jobpilot.ai_service.graph import AnalysisContext, compare, extract, find_resources
+from jobpilot.ai_service.graph import (
+    AnalysisContext,
+    analysis_graph,
+    compare,
+    extract,
+    find_resources,
+)
 from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillResources
 
 STATE = {
@@ -99,3 +106,53 @@ def test_find_resources_returns_no_update_when_the_search_fails(caplog):
 
     assert update == {}  # graceful degradation: the state keeps the result as it was
     assert "Learning resource search failed" in caplog.text
+
+
+def run_graph(model, finder=None):
+    """Run the whole compiled graph, the way /analyze will."""
+    context = AnalysisContext(model=model, find_resources=finder or FakeResourceFinder())
+    return asyncio.run(analysis_graph.ainvoke(STATE, context=context))
+
+
+def test_graph_runs_all_nodes_when_skills_are_missing():
+    model = FakeModel(
+        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+    )
+    finder = FakeResourceFinder(results=[DOCKER_RESOURCES])
+
+    final_state = run_graph(model, finder)
+
+    result = final_state["result"]
+    assert result.missing_skills == ["Docker"]
+    assert result.learning_resources == [DOCKER_RESOURCES]
+    assert finder.skills == ["Docker"]
+
+
+def test_graph_skips_the_search_when_nothing_is_missing():
+    model = FakeModel(extraction=SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
+    finder = FakeResourceFinder()
+
+    final_state = run_graph(model, finder)
+
+    assert final_state["result"].match_score == 1.0
+    assert finder.skills is None  # the conditional edge went straight to END
+
+
+def test_graph_keeps_the_result_when_the_search_fails():
+    model = FakeModel(
+        extraction=SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"])
+    )
+    finder = FakeResourceFinder(error=RuntimeError("database is down"))
+
+    final_state = run_graph(model, finder)
+
+    assert final_state["result"].missing_skills == ["Docker"]
+    assert final_state["result"].learning_resources == []
+
+
+def test_graph_lets_extraction_errors_propagate():
+    # The graph does not hide LLM failures: /analyze turns them into a 502
+    model = FakeModel(error=RuntimeError("Groq is down"))
+
+    with pytest.raises(RuntimeError, match="Groq is down"):
+        run_graph(model)

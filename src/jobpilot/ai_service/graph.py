@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
 from .extraction import extract_skills
@@ -74,3 +76,30 @@ async def find_resources(state: AnalysisState, runtime: Runtime[AnalysisContext]
         return {}  # nothing changes
     # Never mutate the state in place: return a new value and let LangGraph store it.
     return {"result": result.model_copy(update={"learning_resources": resources})}
+
+
+def route_after_compare(state: AnalysisState) -> str:
+    """Conditional edge: search for resources only when some skills are missing."""
+    return "find_resources" if state["result"].missing_skills else END
+
+
+def build_graph() -> CompiledStateGraph:
+    """Wire the nodes together: extract -> compare -> (find_resources) -> end."""
+    builder = StateGraph(AnalysisState, context_schema=AnalysisContext)
+
+    builder.add_node(extract)  # the node name is the function name
+    builder.add_node(compare)
+    builder.add_node(find_resources)
+
+    builder.add_edge(START, "extract")
+    builder.add_edge("extract", "compare")
+    # path_map lists the possible targets, so LangGraph can validate and draw the graph
+    builder.add_conditional_edges("compare", route_after_compare, ["find_resources", END])
+    builder.add_edge("find_resources", END)
+
+    # compile() checks the structure (e.g. no node without a way in) and returns a runnable
+    return builder.compile()
+
+
+# Compiled once at import time; every run gets its own state and context.
+analysis_graph = build_graph()
