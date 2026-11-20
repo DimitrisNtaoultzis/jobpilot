@@ -1,12 +1,15 @@
 import asyncio
 
+import pytest
 from fakes import TEXT, FakeModel
 
 from jobpilot.ai_service.cover_letter import (
     HAS_REQUIRED_GAPS,
     NO_REQUIRED_GAPS,
     SYSTEM_PROMPT,
+    CoverLetterError,
     build_messages,
+    check_cover_letter,
     write_cover_letter,
 )
 
@@ -46,3 +49,20 @@ def test_write_cover_letter_makes_a_plain_call_and_returns_the_trimmed_text():
     assert letter == "Dear hiring team,\n\nI am applying..."
     call = model.call_for(TEXT)  # free text: no structured output, no tools
     assert CV_TEXT in call.messages[-1].content
+
+
+def test_check_cover_letter_accepts_a_normal_letter():
+    letter = "Dear hiring team,\n\nI build Python APIs (3 years).\n\nKind regards"
+
+    assert check_cover_letter(letter) == letter
+
+
+def test_check_cover_letter_rejects_an_empty_letter():
+    with pytest.raises(CoverLetterError, match="empty"):
+        check_cover_letter("")
+
+
+@pytest.mark.parametrize("placeholder", ["[Company Name]", "[Your Name]", "[Hiring Manager]"])
+def test_check_cover_letter_rejects_a_placeholder(placeholder):
+    with pytest.raises(CoverLetterError, match="placeholder"):
+        check_cover_letter(f"Dear {placeholder},\n\nI am applying.")

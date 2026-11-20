@@ -1,5 +1,7 @@
 """Cover letter writing with the LLM: the prompt and the call (plain text, no schema)."""
 
+import re
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
@@ -68,3 +70,25 @@ async def write_cover_letter(
     )
     # .text joins the text parts of the message; a reasoning model's thinking is not in it
     return answer.text.strip()
+
+
+# A short text in square brackets, such as [Company Name] or [Your Name]
+PLACEHOLDER = re.compile(r"\[[^\]\n]{1,40}\]")
+
+
+class CoverLetterError(ValueError):
+    """The model's letter failed a check and must not reach the user."""
+
+
+def check_cover_letter(text: str) -> str:
+    """The checks plain code can do on free text; returns the text if it passes.
+
+    Whether every claim is backed by the CV is a judgment, not a pattern: that is for
+    the evals (LLM-as-judge, Phase 5).
+    """
+    if not text:
+        raise CoverLetterError("The letter is empty")
+    if match := PLACEHOLDER.search(text):
+        # Safe to put in the message (and so in the logs): a placeholder holds no CV data
+        raise CoverLetterError(f"The letter contains a placeholder: {match.group()}")
+    return text

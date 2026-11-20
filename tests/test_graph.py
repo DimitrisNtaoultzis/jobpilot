@@ -1,10 +1,11 @@
 import asyncio
 
 import pytest
-from fakes import TOOLS, FakeModel, FakeResourceFinder, search_call, submit_call
+from fakes import TEXT, TOOLS, FakeModel, FakeResourceFinder, search_call, submit_call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
+from jobpilot.ai_service.cover_letter import HAS_REQUIRED_GAPS, NO_REQUIRED_GAPS
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGap
 from jobpilot.ai_service.graph import (
@@ -18,6 +19,7 @@ from jobpilot.ai_service.graph import (
     resource_agent,
     route_after_agent,
     run_tools,
+    write_letter,
 )
 from jobpilot.ai_service.resource_agent import MAX_AGENT_TURNS, SEARCH_LIMIT
 from jobpilot.ai_service.schemas import AnalyzeResponse, ResourceMatch, SkillGap, SkillResources
@@ -400,3 +402,49 @@ def test_graph_falls_back_to_the_top_result_when_the_agent_fails():
     final_state = run_graph(model, FakeResourceFinder(catalog=CATALOG))
 
     assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
+
+
+def letter_state(priority):
+    """The state after the analysis: Python matched, Docker a gap of this priority."""
+    result = make_result().model_copy(
+        update={"skill_gaps": [SkillGap(skill="Docker", priority=priority)]}
+    )
+    return {**STATE, "result": result}
+
+
+def test_write_letter_returns_the_checked_letter():
+    model = FakeModel(text="Dear hiring team,\n\nI build Python services.")
+
+    update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
+
+    assert update == {"cover_letter": "Dear hiring team,\n\nI build Python services."}
+    user_message = model.call_for(TEXT).messages[-1].content
+    assert "Matched skills: Python" in user_message
+    assert HAS_REQUIRED_GAPS in user_message
+    assert "Docker" not in user_message.split("<analysis>")[1]  # gap names are never sent
+
+
+def test_write_letter_skips_the_gap_sentence_when_only_nice_to_have_skills_are_missing():
+    model = FakeModel(text="Dear hiring team,")
+
+    asyncio.run(write_letter(letter_state("nice_to_have"), make_runtime(model=model)))
+
+    assert NO_REQUIRED_GAPS in model.call_for(TEXT).messages[-1].content
+
+
+def test_write_letter_gives_none_when_the_letter_fails_its_checks(caplog):
+    model = FakeModel(text="Dear [Hiring Manager],\n\nI build Python services.")
+
+    update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
+
+    assert update == {"cover_letter": None}
+    assert "Cover letter failed" in caplog.text
+    assert "I build Python services" not in caplog.text  # the letter never reaches the logs
+
+
+def test_write_letter_gives_none_when_the_llm_fails():
+    model = FakeModel(text=RuntimeError("Groq is down"))
+
+    update = asyncio.run(write_letter(letter_state("must_have"), make_runtime(model=model)))
+
+    assert update == {"cover_letter": None}

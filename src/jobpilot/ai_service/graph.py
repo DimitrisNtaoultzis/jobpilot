@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 
+from .cover_letter import check_cover_letter, write_cover_letter
 from .extraction import extract_skills
 from .gap_analysis import GapReview, apply_gap_review, review_gaps
 from .matching import compare_skills
@@ -58,6 +59,10 @@ class AnalysisState(TypedDict):
     found_resources: NotRequired[Annotated[list[SkillResources], operator.add]]
     # How many times the LLM has answered, to stop the loop (MAX_AGENT_TURNS)
     agent_turns: NotRequired[int]
+
+    # write_letter node (joins the graph in step 2.7, after a human review); None when
+    # the letter could not be written or failed its checks
+    cover_letter: NotRequired[str | None]
 
 
 class FindResources(Protocol):
@@ -184,6 +189,32 @@ def apply_resource_plan(state: AnalysisState) -> dict[str, Any]:
     resources = select_resources(result.missing_skills, state["found_resources"], plan)
     # Never mutate the state in place: return a new value and let LangGraph store it.
     return {"result": result.model_copy(update={"learning_resources": resources})}
+
+
+async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
+    """Node: the LLM writes a cover letter from the CV, the job posting and the analysis.
+
+    Not wired into the graph yet: in step 2.7 it runs after the user approves the analysis.
+    """
+    result = state["result"]
+    # Only gaps the job requires call for the "ready to learn" sentence
+    has_required_gaps = any(gap.priority == "must_have" for gap in result.skill_gaps)
+    try:
+        text = await write_cover_letter(
+            runtime.context.model,
+            state["cv_text"],
+            state["job_title"],
+            state["job_description"],
+            result.matched_skills,
+            has_required_gaps,
+        )
+        letter = check_cover_letter(text)
+    except Exception:
+        # The analysis is still useful without a letter. Never log the letter itself:
+        # it is built from the CV (personal data).
+        logger.exception("Cover letter failed")
+        return {"cover_letter": None}
+    return {"cover_letter": letter}
 
 
 def route_after_compare(state: AnalysisState) -> str:
