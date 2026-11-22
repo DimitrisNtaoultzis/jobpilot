@@ -8,9 +8,11 @@ from typing import Annotated, Any, NotRequired, Protocol, TypedDict
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import interrupt
 
 from .cover_letter import write_cover_letter
 from .extraction import extract_skills
@@ -61,8 +63,10 @@ class AnalysisState(TypedDict):
     # How many times the LLM has answered, to stop the loop (MAX_AGENT_TURNS)
     agent_turns: NotRequired[int]
 
-    # write_letter node (joins the graph in step 2.7, after a human review); None when
-    # the letter could not be written or failed its checks
+    # human_review node: the user's answer when the graph resumes after the review
+    letter_requested: NotRequired[bool]
+    # write_letter node (runs only if the user asked for it); None when the letter
+    # could not be written or failed its checks
     cover_letter: NotRequired[str | None]
 
 
@@ -199,10 +203,26 @@ def apply_resource_plan(state: AnalysisState) -> dict[str, Any]:
     return {"result": result.model_copy(update={"learning_resources": resources})}
 
 
+def human_review(state: AnalysisState) -> dict[str, Any]:
+    """Node: pause the graph until the user has reviewed the analysis.
+
+    interrupt() saves the state (checkpointer) and ends this run; the result is shown to
+    the user. A later run with Command(resume={"write_letter": ...}) and the same
+    thread_id starts this node AGAIN from its first line, and then interrupt() returns
+    the resume value. So this node does nothing else: no LLM call may run twice.
+
+    Resume with a full decision, never an empty dict: LangGraph reads {} as a map of
+    interrupt ids that answers none of them, and the run silently stays paused.
+    """
+    decision = interrupt(state["result"])
+    return {"letter_requested": bool(decision.get("write_letter", False))}
+
+
 async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) -> dict[str, Any]:
     """Node: the LLM writes a cover letter from the CV, the job posting and the analysis.
 
-    Not wired into the graph yet: in step 2.7 it runs after the user approves the analysis.
+    Runs after human_review, only if the user asked for a letter: the analysis and the
+    letter are separate runs, so their tokens do not count against the same minute.
     """
     result = state["result"]
     try:
@@ -225,17 +245,17 @@ async def write_letter(state: AnalysisState, runtime: Runtime[AnalysisContext]) 
 
 def route_after_compare(state: AnalysisState) -> str:
     """Conditional edge: review the gaps only when some skills are missing."""
-    return "gap_analysis" if state["result"].missing_skills else END
+    return "gap_analysis" if state["result"].missing_skills else "human_review"
 
 
 def route_after_gap_analysis(state: AnalysisState) -> str:
     """Conditional edge: search for resources only when real gaps are left."""
-    return "prefetch_resources" if state["result"].missing_skills else END
+    return "prefetch_resources" if state["result"].missing_skills else "human_review"
 
 
 def route_after_prefetch(state: AnalysisState) -> str:
     """Conditional edge: start the agent only if the search worked."""
-    return "resource_agent" if state.get("found_resources") else END
+    return "resource_agent" if state.get("found_resources") else "human_review"
 
 
 def route_after_agent(state: AnalysisState) -> str:
@@ -252,9 +272,28 @@ def route_after_agent(state: AnalysisState) -> str:
     return "run_tools"
 
 
-def build_graph() -> CompiledStateGraph:
+def route_after_review(state: AnalysisState) -> str:
+    """Conditional edge: write the cover letter only if the user asked for it."""
+    return "write_letter" if state["letter_requested"] else END
+
+
+def route_after_letter(state: AnalysisState) -> str:
+    """Conditional edge: finish, or pause again if the letter failed.
+
+    A failed letter (e.g. Groq's tokens-per-minute limit) goes back to human_review, so
+    the user can ask again later; finishing would force a whole new analysis.
+    """
+    return END if state["cover_letter"] is not None else "human_review"
+
+
+def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     """Wire the nodes: a workflow (extract, compare, gap_analysis, prefetch_resources)
-    that ends with an agent loop (resource_agent <-> run_tools, then apply_resource_plan).
+    with an agent loop (resource_agent <-> run_tools, then apply_resource_plan). Every
+    path then stops at human_review; after the user's answer, write_letter may run, and
+    a failed letter goes back to human_review (a retry loop through the user).
+
+    human_review needs a checkpointer to save the paused state, so without one a run
+    fails when it reaches the interrupt.
     """
     builder = StateGraph(AnalysisState, context_schema=AnalysisContext)
 
@@ -265,27 +304,28 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node(resource_agent)
     builder.add_node(run_tools)
     builder.add_node(apply_resource_plan)
+    builder.add_node(human_review)
+    builder.add_node(write_letter)
 
     builder.add_edge(START, "extract")
     builder.add_edge("extract", "compare")
     # path_map lists the possible targets, so LangGraph can validate and draw the graph
-    builder.add_conditional_edges("compare", route_after_compare, ["gap_analysis", END])
+    builder.add_conditional_edges("compare", route_after_compare, ["gap_analysis", "human_review"])
     builder.add_conditional_edges(
-        "gap_analysis", route_after_gap_analysis, ["prefetch_resources", END]
+        "gap_analysis", route_after_gap_analysis, ["prefetch_resources", "human_review"]
     )
     builder.add_conditional_edges(
-        "prefetch_resources", route_after_prefetch, ["resource_agent", END]
+        "prefetch_resources", route_after_prefetch, ["resource_agent", "human_review"]
     )
     # The agent loop: the LLM asks for searches, run_tools answers, the LLM decides again
     builder.add_conditional_edges(
         "resource_agent", route_after_agent, ["run_tools", "apply_resource_plan"]
     )
     builder.add_edge("run_tools", "resource_agent")
-    builder.add_edge("apply_resource_plan", END)
+    builder.add_edge("apply_resource_plan", "human_review")
+    # The human in the loop: the graph pauses here and resumes with the user's answer
+    builder.add_conditional_edges("human_review", route_after_review, ["write_letter", END])
+    builder.add_conditional_edges("write_letter", route_after_letter, [END, "human_review"])
 
     # compile() checks the structure (e.g. no node without a way in) and returns a runnable
-    return builder.compile()
-
-
-# Compiled once at import time; every run gets its own state and context.
-analysis_graph = build_graph()
+    return builder.compile(checkpointer=checkpointer)

@@ -1,17 +1,22 @@
+import uuid
+
 import pytest
 from fakes import FakeModel, FakeResourceFinder, submit_call
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import GapReview, ReviewedGap
+from jobpilot.ai_service.graph import build_graph
 from jobpilot.ai_service.llm import get_chat_model
-from jobpilot.ai_service.main import app, get_resource_finder
+from jobpilot.ai_service.main import app, get_analysis_graph, get_resource_finder
 from jobpilot.ai_service.schemas import (
     MAX_CV_LENGTH,
     MAX_JOB_DESCRIPTION_LENGTH,
     AnalyzeResponse,
     ResourceMatch,
+    ReviewDecision,
     SkillResources,
 )
 
@@ -20,6 +25,8 @@ VALID_PAYLOAD = {
     "job_title": "Backend Engineer",
     "job_description": "We need Python",
 }
+
+LETTER = "Dear hiring team,\n\nI build Python services."
 
 
 DOCKER_RESOURCES = SkillResources(
@@ -49,6 +56,7 @@ def fake_model():
         GapReview(covered=[], gaps=[ReviewedGap(skill="Docker", priority="nice_to_have")]),
         # The resource agent submits at once (it runs only when the finder finds something)
         turns=[submit_call(Docker=["https://docs.docker.com/get-started/"])],
+        text=LETTER,  # the cover letter, for the tests that resume the run
     )
     # Dependency injection pays off: /analyze gets the fake, its code stays unchanged.
     app.dependency_overrides[get_chat_model] = lambda: model
@@ -65,6 +73,15 @@ def fake_finder():
     app.dependency_overrides.pop(get_resource_finder)
 
 
+@pytest.fixture(autouse=True)
+def in_memory_graph():
+    """Every test gets the real graph with an in-memory checkpointer (no database)."""
+    graph = build_graph(InMemorySaver())
+    app.dependency_overrides[get_analysis_graph] = lambda: graph
+    yield graph
+    app.dependency_overrides.pop(get_analysis_graph)
+
+
 def test_health(api_client):
     response = api_client.get("/health")
 
@@ -76,7 +93,10 @@ def test_analyze_returns_the_response_shape(api_client, fake_model):
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
     assert response.status_code == 200
-    assert set(response.json()) == {
+    body = response.json()
+    assert set(body) == {"thread_id", "analysis"}
+    uuid.UUID(body["thread_id"])  # raises if it is not a valid UUID
+    assert set(body["analysis"]) == {
         "required_skills",
         "matched_skills",
         "missing_skills",
@@ -89,7 +109,7 @@ def test_analyze_returns_the_response_shape(api_client, fake_model):
 def test_analyze_compares_the_extracted_skills(api_client, fake_model):
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
-    assert response.json() == {
+    assert response.json()["analysis"] == {
         "required_skills": ["Python", "Docker"],
         "matched_skills": ["Python"],
         "missing_skills": ["Docker"],
@@ -105,7 +125,7 @@ def test_analyze_searches_resources_for_the_missing_skills(api_client, fake_mode
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
     assert fake_finder.skills == ["Docker"]  # only the missing skills, not "Python"
-    assert response.json()["learning_resources"] == [DOCKER_RESOURCES.model_dump()]
+    assert response.json()["analysis"]["learning_resources"] == [DOCKER_RESOURCES.model_dump()]
 
 
 def test_analyze_skips_the_search_when_nothing_is_missing(api_client, fake_model, fake_finder):
@@ -116,7 +136,7 @@ def test_analyze_skips_the_search_when_nothing_is_missing(api_client, fake_model
     response = api_client.post("/analyze", json=VALID_PAYLOAD)
 
     assert fake_finder.skills is None  # never called: no database round trip
-    assert response.json()["learning_resources"] == []
+    assert response.json()["analysis"]["learning_resources"] == []
 
 
 def test_analyze_still_succeeds_when_the_search_fails(api_client, fake_model, fake_finder):
@@ -126,8 +146,8 @@ def test_analyze_still_succeeds_when_the_search_fails(api_client, fake_model, fa
 
     # Graceful degradation: the skill analysis is returned without resources
     assert response.status_code == 200
-    assert response.json()["missing_skills"] == ["Docker"]
-    assert response.json()["learning_resources"] == []
+    assert response.json()["analysis"]["missing_skills"] == ["Docker"]
+    assert response.json()["analysis"]["learning_resources"] == []
     assert "database is down" not in response.text
 
 
@@ -157,7 +177,85 @@ def test_analyze_still_succeeds_when_the_gap_review_fails(api_client, fake_model
 
     # Graceful degradation: plain matching is kept, every gap is a cautious must_have
     assert response.status_code == 200
-    assert response.json()["skill_gaps"] == [{"skill": "Docker", "priority": "must_have"}]
+    assert response.json()["analysis"]["skill_gaps"] == [
+        {"skill": "Docker", "priority": "must_have"}
+    ]
+
+
+def start_analysis(api_client):
+    """Run /analyze and return the thread id of the paused run."""
+    response = api_client.post("/analyze", json=VALID_PAYLOAD)
+    assert response.status_code == 200
+    return response.json()["thread_id"]
+
+
+def resume(api_client, thread_id, write_letter):
+    return api_client.post(f"/analyze/{thread_id}/resume", json={"write_letter": write_letter})
+
+
+def test_resume_writes_the_letter_when_asked(api_client, fake_model):
+    thread_id = start_analysis(api_client)
+
+    response = resume(api_client, thread_id, write_letter=True)
+
+    assert response.status_code == 200
+    assert response.json() == {"cover_letter": LETTER}
+
+
+def test_resume_without_a_letter_when_the_user_declines(api_client, fake_model):
+    thread_id = start_analysis(api_client)
+
+    response = resume(api_client, thread_id, write_letter=False)
+
+    assert response.status_code == 200
+    assert response.json() == {"cover_letter": None}
+    assert fake_model.text_calls_made() == []  # no tokens spent on a letter
+
+
+def test_resume_returns_404_for_an_unknown_analysis(api_client, fake_model):
+    response = resume(api_client, uuid.uuid4(), write_letter=True)
+
+    assert response.status_code == 404
+
+
+def test_resume_returns_409_when_the_analysis_is_finished(api_client, fake_model):
+    thread_id = start_analysis(api_client)
+    resume(api_client, thread_id, write_letter=True)
+
+    response = resume(api_client, thread_id, write_letter=True)
+
+    assert response.status_code == 409
+    assert len(fake_model.text_calls_made()) == 1  # the letter was not written twice
+
+
+def test_resume_rejects_an_empty_decision(api_client, fake_model):
+    thread_id = start_analysis(api_client)
+
+    response = api_client.post(f"/analyze/{thread_id}/resume", json={})
+
+    assert response.status_code == 422
+    # The run is still paused, so a valid decision works afterwards
+    assert resume(api_client, thread_id, write_letter=False).status_code == 200
+
+
+def test_resume_rejects_a_thread_id_that_is_not_a_uuid(api_client, fake_model):
+    response = resume(api_client, "not-a-uuid", write_letter=True)
+
+    assert response.status_code == 422
+
+
+def test_resume_returns_502_when_the_letter_fails_and_can_be_retried(api_client, fake_model):
+    fake_model.text = [RuntimeError("Groq is down"), LETTER]
+    thread_id = start_analysis(api_client)
+
+    failed = resume(api_client, thread_id, write_letter=True)
+
+    assert failed.status_code == 502
+    assert "Groq is down" not in failed.text
+    # The run paused again at the review: the same request works later
+    retried = resume(api_client, thread_id, write_letter=True)
+    assert retried.status_code == 200
+    assert retried.json() == {"cover_letter": LETTER}
 
 
 def test_analyze_rejects_a_missing_field(api_client):
@@ -190,3 +288,24 @@ def test_analyze_rejects_a_too_long_job_description(api_client):
 def test_response_schema_rejects_a_score_above_one():
     with pytest.raises(ValidationError):
         AnalyzeResponse(required_skills=[], matched_skills=[], missing_skills=[], match_score=1.5)
+
+
+def test_review_decision_accepts_a_boolean():
+    assert ReviewDecision.model_validate({"write_letter": True}).write_letter is True
+    assert ReviewDecision.model_validate({"write_letter": False}).write_letter is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},  # LangGraph would read Command(resume={}) as no answer and stay paused
+        {"write_leter": True},  # a typo must not pass as "no letter"
+        {"write_letter": True, "extra": 1},
+        {"write_letter": "yes"},  # strict: only a JSON boolean
+        {"write_letter": 1},
+        {"write_letter": None},
+    ],
+)
+def test_review_decision_rejects_anything_but_one_boolean(body):
+    with pytest.raises(ValidationError):
+        ReviewDecision.model_validate(body)

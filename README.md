@@ -41,12 +41,16 @@ uv run python -m jobpilot.ai_service.ingest    # load the learning resources (RA
 
 The AI service needs a free [Groq](https://console.groq.com/) API key in `.env` (`GROQ_API_KEY`).
 The first ingestion downloads the embedding model (~67 MB) to a local cache.
+The AI service needs the database at startup: it keeps paused analyses (LangGraph checkpoints)
+in the `ai` schema and does not start without them. The `--loop asyncio:SelectorEventLoop`
+option below is for Windows, where async psycopg cannot use the default event loop
+(on Linux it is already the default).
 
 **Useful commands:**
 
 ```bash
 uv run python manage.py runserver    # start the dev server at http://127.0.0.1:8000/
-uv run uvicorn jobpilot.ai_service.main:app --port 8001    # start the AI service; API docs at http://127.0.0.1:8001/docs
+uv run uvicorn jobpilot.ai_service.main:app --port 8001 --loop asyncio:SelectorEventLoop    # start the AI service; API docs at http://127.0.0.1:8001/docs
 uv run python -m jobpilot.ai_service.ingest    # re-run after editing src/jobpilot/ai_service/data/learning_resources.toml
 uv run pytest                        # run the tests (needs the database running)
 uv run ruff check .                  # lint

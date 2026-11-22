@@ -1,5 +1,6 @@
 """Request/response schemas: the contract between the Django app and the AI service."""
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,3 +63,32 @@ class AnalyzeResponse(BaseModel):
     # One entry per missing skill. Empty when nothing is missing, or when the search
     # failed: the skill analysis is still useful without it (graceful degradation).
     learning_resources: list[SkillResources] = Field(default_factory=list)
+
+
+class AnalysisRun(BaseModel):
+    """The answer of /analyze: the analysis, paused for the user's review.
+
+    The thread id is how the client resumes this run later; it is not part of the
+    analysis itself, so it stays outside AnalyzeResponse.
+    """
+
+    thread_id: uuid.UUID
+    analysis: AnalyzeResponse
+
+
+class ReviewDecision(BaseModel):
+    """The user's answer after reviewing the analysis (the body of the resume request)."""
+
+    # forbid: a typo such as "write_leter" is an error, not silently ignored.
+    # strict: only a real JSON boolean; no "yes" or 1 turned into True.
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    # Required: an empty body must never reach the graph, since LangGraph reads
+    # Command(resume={}) as "answer no interrupt" and the run silently stays paused.
+    write_letter: bool
+
+
+class ResumeResponse(BaseModel):
+    """The answer of a resumed run: the cover letter, or None if the user declined."""
+
+    cover_letter: str | None
