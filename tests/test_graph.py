@@ -21,6 +21,7 @@ from jobpilot.ai_service.graph import (
     prefetch_resources,
     resource_agent,
     route_after_agent,
+    route_after_letter,
     route_after_review,
     run_tools,
     write_letter,
@@ -488,6 +489,35 @@ def test_graph_ends_without_a_letter_when_the_user_declines():
 def test_route_after_review():
     assert route_after_review({**STATE, "letter_requested": True}) == "write_letter"
     assert route_after_review({**STATE, "letter_requested": False}) == END
+
+
+def test_graph_pauses_again_when_the_letter_fails():
+    # The 1st letter call fails (e.g. Groq's rate limit), the 2nd one works
+    model = docker_gap_model(
+        submit_call(Docker=[url("docker")]), text=[RuntimeError("Groq is down"), LETTER]
+    )
+    config = new_config()
+    run_graph(model, FakeResourceFinder(catalog=CATALOG), config)
+    calls_before_resume = len(model.calls)
+
+    failed_state = resume_graph(config, {"write_letter": True}, model)
+
+    assert failed_state["cover_letter"] is None
+    assert "__interrupt__" in failed_state  # paused again: the user can ask once more
+    assert analysis_graph.get_state(config).next == ("human_review",)
+
+    final_state = resume_graph(config, {"write_letter": True}, model)
+
+    assert final_state["cover_letter"] == LETTER
+    assert analysis_graph.get_state(config).next == ()
+    # Only the two letter calls were new: the analysis never ran again
+    assert len(model.calls) == calls_before_resume + 2
+    assert len(model.text_calls_made()) == 2
+
+
+def test_route_after_letter():
+    assert route_after_letter({**STATE, "cover_letter": LETTER}) == END
+    assert route_after_letter({**STATE, "cover_letter": None}) == "human_review"
 
 
 def letter_state(priority):

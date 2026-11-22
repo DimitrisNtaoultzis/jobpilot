@@ -277,10 +277,20 @@ def route_after_review(state: AnalysisState) -> str:
     return "write_letter" if state["letter_requested"] else END
 
 
+def route_after_letter(state: AnalysisState) -> str:
+    """Conditional edge: finish, or pause again if the letter failed.
+
+    A failed letter (e.g. Groq's tokens-per-minute limit) goes back to human_review, so
+    the user can ask again later; finishing would force a whole new analysis.
+    """
+    return END if state["cover_letter"] is not None else "human_review"
+
+
 def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:
     """Wire the nodes: a workflow (extract, compare, gap_analysis, prefetch_resources)
     with an agent loop (resource_agent <-> run_tools, then apply_resource_plan). Every
-    path then stops at human_review; after the user's answer, write_letter may run.
+    path then stops at human_review; after the user's answer, write_letter may run, and
+    a failed letter goes back to human_review (a retry loop through the user).
 
     human_review needs a checkpointer to save the paused state, so without one a run
     fails when it reaches the interrupt.
@@ -315,7 +325,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
     builder.add_edge("apply_resource_plan", "human_review")
     # The human in the loop: the graph pauses here and resumes with the user's answer
     builder.add_conditional_edges("human_review", route_after_review, ["write_letter", END])
-    builder.add_edge("write_letter", END)
+    builder.add_conditional_edges("write_letter", route_after_letter, [END, "human_review"])
 
     # compile() checks the structure (e.g. no node without a way in) and returns a runnable
     return builder.compile(checkpointer=checkpointer)
