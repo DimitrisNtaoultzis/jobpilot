@@ -9,7 +9,6 @@ from typing import Annotated, Any, NotRequired, Protocol, TypedDict
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph, add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
@@ -320,8 +319,3 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStat
 
     # compile() checks the structure (e.g. no node without a way in) and returns a runnable
     return builder.compile(checkpointer=checkpointer)
-
-
-# Compiled once at import time; every run gets its own state and context.
-# InMemorySaver keeps paused runs in RAM only (lost on restart): Postgres in step 2.7β.
-analysis_graph = build_graph(InMemorySaver())

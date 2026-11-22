@@ -4,6 +4,7 @@ import uuid
 import pytest
 from fakes import TEXT, TOOLS, FakeModel, FakeResourceFinder, search_call, submit_call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END
 from langgraph.runtime import Runtime
 from langgraph.types import Command
@@ -12,8 +13,8 @@ from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGap
 from jobpilot.ai_service.graph import (
     AnalysisContext,
-    analysis_graph,
     apply_resource_plan,
+    build_graph,
     compare,
     extract,
     gap_analysis,
@@ -284,6 +285,10 @@ def test_gap_analysis_keeps_every_gap_as_must_have_when_the_llm_fails(caplog):
         SkillGap(skill="Docker", priority="must_have"),
     ]
     assert "Gap review failed" in caplog.text
+
+
+# The real graph with an in-memory checkpointer: fast, and no database needed
+analysis_graph = build_graph(InMemorySaver())
 
 
 def new_config():

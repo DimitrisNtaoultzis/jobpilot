@@ -1,7 +1,10 @@
 """JobPilot AI service: the FastAPI app that runs the analysis (LLM, agent).
 
 Run locally with:
-    uv run uvicorn jobpilot.ai_service.main:app --reload --port 8001
+    uv run uvicorn jobpilot.ai_service.main:app --port 8001 --loop asyncio:SelectorEventLoop
+
+Add --reload to restart on code changes. The selector loop is for Windows: async psycopg
+(used by the checkpointer) rejects the default ProactorEventLoop; see the README.
 """
 
 import asyncio
@@ -13,12 +16,14 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from langchain_core.language_models.chat_models import BaseChatModel
+from langgraph.graph.state import CompiledStateGraph
 from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
+from .checkpoints import open_checkpointer
 from .config import get_settings
 from .embeddings import get_embedding_model
-from .graph import AnalysisContext, analysis_graph
+from .graph import AnalysisContext, build_graph
 from .llm import get_chat_model
 from .retrieval import ResourceFinder
 from .schemas import AnalyzeRequest, AnalyzeResponse
@@ -29,8 +34,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup (before yield) and shutdown (after yield): resources shared by all requests."""
+    database_url = get_settings().database_url.get_secret_value()
     pool = ConnectionPool(
-        get_settings().database_url.get_secret_value(),
+        database_url,
         min_size=1,
         max_size=4,
         # The pool discards a connection that configure leaves inside a transaction, and
@@ -46,7 +52,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     model = await asyncio.to_thread(get_embedding_model)
     app.state.resource_finder = ResourceFinder(pool, model)
     try:
-        yield
+        # Unlike the search, the checkpointer is required: if the database is down,
+        # startup stops here (fail fast)
+        async with open_checkpointer(database_url) as checkpointer:
+            # Compiled here, not at import time: the checkpointer needs an open pool
+            app.state.analysis_graph = build_graph(checkpointer)
+            yield
     finally:
         pool.close()
 
@@ -57,6 +68,11 @@ app = FastAPI(title="JobPilot AI service", version="0.1.0", lifespan=lifespan)
 def get_resource_finder(request: Request) -> ResourceFinder:
     """The finder created at startup (tests replace it via app.dependency_overrides)."""
     return request.app.state.resource_finder
+
+
+def get_analysis_graph(request: Request) -> CompiledStateGraph:
+    """The graph compiled at startup (tests replace it via app.dependency_overrides)."""
+    return request.app.state.analysis_graph
 
 
 @app.get("/health")
@@ -71,6 +87,7 @@ async def analyze(
     # Dependency injection: tests replace get_chat_model via app.dependency_overrides.
     model: Annotated[BaseChatModel, Depends(get_chat_model)],
     finder: Annotated[ResourceFinder, Depends(get_resource_finder)],
+    graph: Annotated[CompiledStateGraph, Depends(get_analysis_graph)],
 ) -> AnalyzeResponse:
     """Compare a CV with a job posting: the LLM extracts the skills, plain code compares them,
     and a semantic search suggests learning resources for the missing ones.
@@ -83,7 +100,7 @@ async def analyze(
     # this id, and resuming it later (step 2.7γ) needs the same id.
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     try:
-        paused_state = await analysis_graph.ainvoke(payload.model_dump(), config, context=context)
+        paused_state = await graph.ainvoke(payload.model_dump(), config, context=context)
     except Exception as exc:
         # Service boundary: log the full traceback, return a safe message to the client.
         # Log the error, never the texts: CVs contain personal data.

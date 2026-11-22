@@ -1,12 +1,14 @@
 import pytest
 from fakes import FakeModel, FakeResourceFinder, submit_call
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import GapReview, ReviewedGap
+from jobpilot.ai_service.graph import build_graph
 from jobpilot.ai_service.llm import get_chat_model
-from jobpilot.ai_service.main import app, get_resource_finder
+from jobpilot.ai_service.main import app, get_analysis_graph, get_resource_finder
 from jobpilot.ai_service.schemas import (
     MAX_CV_LENGTH,
     MAX_JOB_DESCRIPTION_LENGTH,
@@ -63,6 +65,15 @@ def fake_finder():
     app.dependency_overrides[get_resource_finder] = lambda: finder
     yield finder
     app.dependency_overrides.pop(get_resource_finder)
+
+
+@pytest.fixture(autouse=True)
+def in_memory_graph():
+    """Every test gets the real graph with an in-memory checkpointer (no database)."""
+    graph = build_graph(InMemorySaver())
+    app.dependency_overrides[get_analysis_graph] = lambda: graph
+    yield graph
+    app.dependency_overrides.pop(get_analysis_graph)
 
 
 def test_health(api_client):
