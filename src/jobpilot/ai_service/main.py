@@ -6,6 +6,7 @@ Run locally with:
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -78,8 +79,11 @@ async def analyze(
     HTTP to a graph run and back.
     """
     context = AnalysisContext(model=model, find_resources=finder)
+    # Every analysis is its own thread: the checkpointer saves its paused state under
+    # this id, and resuming it later (step 2.7γ) needs the same id.
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     try:
-        final_state = await analysis_graph.ainvoke(payload.model_dump(), context=context)
+        paused_state = await analysis_graph.ainvoke(payload.model_dump(), config, context=context)
     except Exception as exc:
         # Service boundary: log the full traceback, return a safe message to the client.
         # Log the error, never the texts: CVs contain personal data.
@@ -89,4 +93,5 @@ async def analyze(
             status_code=502, detail="The AI model could not analyze this request."
         ) from exc
 
-    return final_state["result"]
+    # The run stopped at human_review: the analysis is ready for the user to review
+    return paused_state["result"]

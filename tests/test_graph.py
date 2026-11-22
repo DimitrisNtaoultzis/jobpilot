@@ -1,9 +1,12 @@
 import asyncio
+import uuid
 
 import pytest
 from fakes import TEXT, TOOLS, FakeModel, FakeResourceFinder, search_call, submit_call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.graph import END
 from langgraph.runtime import Runtime
+from langgraph.types import Command
 
 from jobpilot.ai_service.extraction import SkillExtraction
 from jobpilot.ai_service.gap_analysis import CoveredSkill, GapReview, ReviewedGap
@@ -17,6 +20,7 @@ from jobpilot.ai_service.graph import (
     prefetch_resources,
     resource_agent,
     route_after_agent,
+    route_after_review,
     run_tools,
     write_letter,
 )
@@ -282,18 +286,32 @@ def test_gap_analysis_keeps_every_gap_as_must_have_when_the_llm_fails(caplog):
     assert "Gap review failed" in caplog.text
 
 
-def run_graph(model, finder=None):
-    """Run the whole compiled graph, the way /analyze will."""
+def new_config():
+    """A new thread for every run, so tests never share a paused state."""
+    return {"configurable": {"thread_id": str(uuid.uuid4())}}
+
+
+def run_graph(model, finder=None, config=None):
+    """Run the whole compiled graph, the way /analyze does: it pauses at human_review."""
     context = AnalysisContext(model=model, find_resources=finder or FakeResourceFinder())
-    return asyncio.run(analysis_graph.ainvoke(STATE, context=context))
+    return asyncio.run(analysis_graph.ainvoke(STATE, config or new_config(), context=context))
 
 
-def docker_gap_model(*turns):
-    """A model for a run where Docker is the only gap; `turns` are the agent's answers."""
+def resume_graph(config, decision, model, finder=None):
+    """Resume a paused run with the user's answer (same thread, a new context)."""
+    context = AnalysisContext(model=model, find_resources=finder or FakeResourceFinder())
+    return asyncio.run(analysis_graph.ainvoke(Command(resume=decision), config, context=context))
+
+
+def docker_gap_model(*turns, text=None):
+    """A model for a run where Docker is the only gap; `turns` are the agent's answers,
+    `text` the cover letter (if the run gets that far).
+    """
     return FakeModel(
         SkillExtraction(job_skills=["Python", "Docker"], cv_skills=["python"]),
         DOCKER_IS_A_GAP,
         turns=turns,
+        text=text,
     )
 
 
@@ -405,6 +423,66 @@ def test_graph_falls_back_to_the_top_result_when_the_agent_fails():
     final_state = run_graph(model, FakeResourceFinder(catalog=CATALOG))
 
     assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
+
+
+LETTER = "Dear hiring team,\n\nI build Python services."
+
+
+def test_graph_pauses_for_review_after_the_analysis():
+    model = docker_gap_model(submit_call(Docker=[url("docker")]), text=LETTER)
+    config = new_config()
+
+    paused_state = run_graph(model, FakeResourceFinder(catalog=CATALOG), config)
+
+    [pause] = paused_state["__interrupt__"]
+    assert pause.value == paused_state["result"]  # the analysis is what the user reviews
+    assert analysis_graph.get_state(config).next == ("human_review",)
+    assert model.text_calls_made() == []  # no letter before the user's answer
+
+
+def test_graph_pauses_for_review_when_nothing_is_missing():
+    model = FakeModel(SkillExtraction(job_skills=["Python"], cv_skills=["Python"]))
+    config = new_config()
+
+    paused_state = run_graph(model, config=config)
+
+    assert "__interrupt__" in paused_state
+    assert analysis_graph.get_state(config).next == ("human_review",)
+
+
+def test_graph_writes_the_letter_when_the_user_asks_for_it():
+    model = docker_gap_model(submit_call(Docker=[url("docker")]), text=LETTER)
+    finder = FakeResourceFinder(catalog=CATALOG)
+    config = new_config()
+    run_graph(model, finder, config)
+    calls_before_resume = len(model.calls)
+
+    final_state = resume_graph(config, {"write_letter": True}, model, finder)
+
+    assert final_state["cover_letter"] == LETTER
+    # The analysis came from the checkpoint: the letter was the only new LLM call
+    assert len(model.calls) == calls_before_resume + 1
+    assert model.calls[-1].schema is TEXT
+    assert finder.calls == [(["Docker"], SEARCH_LIMIT)]  # no search again either
+    assert final_state["result"].learning_resources == [DOCKER_RESOURCES]
+    assert analysis_graph.get_state(config).next == ()  # the run is finished
+
+
+def test_graph_ends_without_a_letter_when_the_user_declines():
+    model = docker_gap_model(submit_call(Docker=[url("docker")]), text=LETTER)
+    config = new_config()
+    run_graph(model, FakeResourceFinder(catalog=CATALOG), config)
+
+    final_state = resume_graph(config, {"write_letter": False}, model)
+
+    assert "cover_letter" not in final_state
+    assert model.text_calls_made() == []
+    assert analysis_graph.get_state(config).next == ()
+
+
+def test_route_after_review():
+    assert route_after_review({**STATE, "letter_requested": True}) == "write_letter"
+    assert route_after_review({**STATE, "letter_requested": False}) == END
 
 
 def letter_state(priority):
